@@ -2,10 +2,9 @@
 
 import { useState, useRef, useEffect } from "react"
 import Link from "next/link"
-import { StopCircle, PlayCircle, Loader2, Camera, ShieldAlert } from "lucide-react"
+import { StopCircle, PlayCircle, Loader2, Camera, ShieldAlert, Video, Activity, AlertTriangle, Clock, TrendingUp } from "lucide-react"
 import { DashboardLayout } from "@/components/dashboard-layout"
-import { detectEvents, type VideoEvent } from "./actions"
-import { MOCK_CAMERA_LABELS, MOCK_VIDEO_URLS, YOUR_CAMERA_INDEX, TOTAL_CAMERAS } from "./mock-cameras"
+import { detectEvents } from "./actions"
 
 import type * as blazeface from "@tensorflow-models/blazeface"
 import type * as posedetection from "@tensorflow-models/pose-detection"
@@ -17,6 +16,7 @@ const PRE_SEC = 3000   // 3 seconds before incident
 const POST_SEC = 3000  // 3 seconds after (clip total 6 sec)
 const BUFFER_MS = 10_000
 const CHUNK_MS = 500
+const TOTAL_CAMERAS = 4  // 1 main camera + 3 secondary feeds
 
 interface ChunkItem {
   blob: Blob
@@ -29,8 +29,15 @@ export default function Page() {
   const [isInitializing, setIsInitializing] = useState(true)
   const [initializationProgress, setInitializationProgress] = useState("")
   const [mlModelsReady, setMlModelsReady] = useState(false)
-  const [lastAlert, setLastAlert] = useState<{ description: string; time: string } | null>(null)
   const [isClient, setIsClient] = useState(false)
+  const [showRedFlash, setShowRedFlash] = useState(false)
+  const [incidentCount, setIncidentCount] = useState(0)
+  const [alertCount, setAlertCount] = useState(0)
+  const [recentIncidents, setRecentIncidents] = useState<Array<{
+    description: string
+    time: string
+    isDangerous: boolean
+  }>>([])
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -245,20 +252,37 @@ export default function Page() {
   }
 
   const flushPostIncidentClip = () => {
+    console.log('[VIDEO SAVE] Flushing post-incident clip...')
     const t0 = incidentTimeRef.current
     const desc = incidentDescRef.current
     incidentTimeRef.current = null
     incidentDescRef.current = null
-    if (t0 == null || !desc) return
+    if (t0 == null || !desc) {
+      console.log('[VIDEO SAVE] Aborted: Missing time or description')
+      return
+    }
     const tEnd = t0 + POST_SEC
     const arr = chunksRef.current
       .filter((c) => c.ts >= t0 - PRE_SEC && c.ts <= tEnd)
       .sort((a, b) => a.ts - b.ts)
-    if (arr.length === 0) return
+    console.log(`[VIDEO SAVE] Collected ${arr.length} chunks for 6-second clip`)
+    if (arr.length === 0) {
+      console.log('[VIDEO SAVE] Aborted: No chunks available')
+      return
+    }
     const blob = new Blob(arr.map((c) => c.blob), { type: arr[0].blob.type || "video/webm" })
+    console.log(`[VIDEO SAVE] Created blob of size: ${blob.size} bytes, type: ${blob.type}`)
+    console.log('[VIDEO SAVE] Saving to Saved Videos...')
     saveIncidentClipToSavedVideos(blob, desc)
-      .then((clipUrl) => { if (clipUrl) updateRetailTheftClipUrl(clipUrl) })
-      .catch((e) => console.error("Save clip:", e))
+      .then((clipUrl) => {
+        if (clipUrl) {
+          console.log('[VIDEO SAVE] ✅ Successfully saved! URL:', clipUrl)
+          updateRetailTheftClipUrl(clipUrl)
+        } else {
+          console.log('[VIDEO SAVE] ✅ Saved to localStorage')
+        }
+      })
+      .catch((e) => console.error('[VIDEO SAVE] ❌ Error:', e))
   }
 
   const saveIncidentSnapshot = async (frameBase64: string, description: string) => {
@@ -275,7 +299,6 @@ export default function Page() {
       })
       const data = await res.json()
       if (data.duplicate) return
-      setLastAlert({ description, time: getElapsedTime() })
     } catch (e) {
       console.error("Failed to save incident snapshot:", e)
     }
@@ -315,11 +338,33 @@ export default function Page() {
     incidentDescRef.current = description
     saveIncidentSnapshot(frameBase64, description)
     addToRetailTheft(description)
+
+    // Update metrics
+    setIncidentCount(prev => prev + 1)
+    setAlertCount(prev => prev + 1)
+
+    // Add to recent incidents
+    const timeStr = getElapsedTime()
+    setRecentIncidents(prev => [{
+      description,
+      time: timeStr,
+      isDangerous: true
+    }, ...prev].slice(0, 5)) // Keep only last 5 incidents
+
+    // Trigger red flash effect
+    setShowRedFlash(true)
+    setTimeout(() => setShowRedFlash(false), 1000) // Flash for 1 second
+
+    // Speak the alert with description - "Shoplifter detected. [description]"
+    const shortDesc = description.length > 100 ? description.substring(0, 100) + "..." : description
+    const ttsMessage = `Shoplifter detected. ${shortDesc}`
+
     fetch("/api/theft-voice", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "THEFT detected" }),
+      body: JSON.stringify({ message: ttsMessage }),
     }).catch(() => {})
+
     if (postTimeoutRef.current) clearTimeout(postTimeoutRef.current)
     postTimeoutRef.current = setTimeout(flushPostIncidentClip, POST_SEC)
   }
@@ -394,10 +439,10 @@ export default function Page() {
     }
     incidentTimeRef.current = null
     incidentDescRef.current = null
-    if (mediaRecorderRef.current?.state !== "inactive") {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop()
-      mediaRecorderRef.current = null
     }
+    mediaRecorderRef.current = null
     if (detectionFrameRef.current) {
       cancelAnimationFrame(detectionFrameRef.current)
       detectionFrameRef.current = null
@@ -423,19 +468,39 @@ export default function Page() {
       if (postTimeoutRef.current) clearTimeout(postTimeoutRef.current)
       if (analysisIntervalRef.current) clearInterval(analysisIntervalRef.current)
       if (detectionFrameRef.current) cancelAnimationFrame(detectionFrameRef.current)
-      if (mediaRecorderRef.current?.state !== "inactive") mediaRecorderRef.current?.stop()
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop()
+      }
     }
   }, [])
 
   return (
     <DashboardLayout>
+      {/* Red Flash Overlay - Covers entire screen edges */}
+      {showRedFlash && (
+        <div className="fixed inset-0 pointer-events-none z-[9999]">
+          {/* Top border */}
+          <div className="absolute top-0 left-0 right-0 h-16 bg-gradient-to-b from-red-500 to-transparent animate-pulse" />
+          {/* Bottom border */}
+          <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-red-500 to-transparent animate-pulse" />
+          {/* Left border */}
+          <div className="absolute top-0 left-0 bottom-0 w-16 bg-gradient-to-r from-red-500 to-transparent animate-pulse" />
+          {/* Right border */}
+          <div className="absolute top-0 right-0 bottom-0 w-16 bg-gradient-to-l from-red-500 to-transparent animate-pulse" />
+          {/* Inner glow */}
+          <div className="absolute inset-0 border-[20px] border-red-500/30 animate-pulse" style={{
+            boxShadow: 'inset 0 0 100px 20px rgba(239, 68, 68, 0.6), 0 0 100px 20px rgba(239, 68, 68, 0.6)'
+          }} />
+        </div>
+      )}
       <div className="space-y-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-white tracking-tight">CCTV Live</h1>
-            <p className="text-gray-400 text-sm mt-0.5">
-              5 demo feeds + your camera (6th) · Your camera runs AI detection
+            <h1 className="text-2xl font-bold text-white tracking-tight">Security Dashboard</h1>
+            <p className="text-gray-400 text-sm mt-0.5 flex items-center gap-2">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+              Live AI Detection Active · 6 Cameras Online
             </p>
           </div>
           <Link
@@ -443,8 +508,50 @@ export default function Page() {
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white text-sm font-medium transition-colors"
           >
             <ShieldAlert className="w-4 h-4" />
-            Detected Incidents
+            View All Incidents
           </Link>
+        </div>
+
+        {/* Metrics */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="bg-gradient-to-br from-white/[0.08] to-white/[0.02] rounded-xl p-5 border border-white/10 hover:border-green-500/20 transition-all duration-300 hover:scale-[1.02] shadow-lg group">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-gray-400 text-xs uppercase tracking-wide font-medium">Cameras</span>
+              <Video className="w-4 h-4 text-green-500 group-hover:scale-110 transition-transform duration-300" />
+            </div>
+            <div className="text-2xl font-bold text-white tracking-tight">{TOTAL_CAMERAS}</div>
+            <div className="text-green-500 text-xs mt-1 flex items-center gap-1 font-medium">
+              <TrendingUp className="w-3 h-3" />
+              All online
+            </div>
+          </div>
+
+          <div className="bg-gradient-to-br from-white/[0.08] to-white/[0.02] rounded-xl p-5 border border-white/10 hover:border-blue-500/20 transition-all duration-300 hover:scale-[1.02] shadow-lg group">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-gray-400 text-xs uppercase tracking-wide font-medium">Incidents</span>
+              <Activity className="w-4 h-4 text-gray-400 group-hover:text-blue-500 transition-colors duration-300" />
+            </div>
+            <div className="text-2xl font-bold text-white tracking-tight">{incidentCount}</div>
+            <div className="text-gray-400 text-xs mt-1 font-medium">This session</div>
+          </div>
+
+          <div className="bg-gradient-to-br from-white/[0.08] to-white/[0.02] rounded-xl p-5 border border-white/10 hover:border-red-500/20 transition-all duration-300 hover:scale-[1.02] shadow-lg group">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-gray-400 text-xs uppercase tracking-wide font-medium">Alerts</span>
+              <AlertTriangle className="w-4 h-4 text-red-500 group-hover:scale-110 transition-transform duration-300" />
+            </div>
+            <div className="text-2xl font-bold text-white tracking-tight">{alertCount}</div>
+            <div className="text-red-500 text-xs mt-1 font-medium">Active</div>
+          </div>
+
+          <div className="bg-gradient-to-br from-white/[0.08] to-white/[0.02] rounded-xl p-5 border border-white/10 hover:border-green-500/20 transition-all duration-300 hover:scale-[1.02] shadow-lg group">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-gray-400 text-xs uppercase tracking-wide font-medium">Response</span>
+              <Clock className="w-4 h-4 text-gray-400 group-hover:text-green-500 transition-colors duration-300" />
+            </div>
+            <div className="text-2xl font-bold text-white tracking-tight">&lt;3s</div>
+            <div className="text-gray-400 text-xs mt-1 font-medium">AI Analysis</div>
+          </div>
         </div>
 
         {error && (
@@ -453,111 +560,182 @@ export default function Page() {
           </div>
         )}
 
-        {lastAlert && (
-          <div className="p-4 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between">
-            <span className="text-gray-300 text-sm">Snapshot saved: {lastAlert.description}</span>
-            <Link href="/pages/detected-incidents" className="text-sm font-medium text-white hover:underline">
-              View
-            </Link>
-          </div>
-        )}
-
-        {/* Grid */}
-        <div className="grid grid-cols-3 gap-3 max-w-4xl">
-          {Array.from({ length: TOTAL_CAMERAS }, (_, i) => {
-            const isYourCamera = i === YOUR_CAMERA_INDEX
-            const label = isYourCamera ? "Your camera" : (MOCK_CAMERA_LABELS[i] ?? `Cam ${i + 1}`)
-            return (
-              <div
-                key={i}
-                className={`rounded-xl overflow-hidden flex flex-col border transition-all duration-200 ${
-                  isYourCamera
-                    ? "bg-white/[0.04] border-white/20 ring-1 ring-white/10 shadow-lg"
-                    : "bg-white/[0.02] border-white/5 hover:border-white/10 hover:bg-white/[0.04]"
-                }`}
-              >
-                <div className="aspect-video bg-black relative flex-shrink-0">
-                  {isYourCamera ? (
-                    <>
-                      {isClient && (
-                        <>
-                          <video
-                            ref={videoRef}
-                            autoPlay
-                            playsInline
-                            muted
-                            className="absolute inset-0 w-full h-full object-cover opacity-0"
-                            width={640}
-                            height={360}
-                          />
-                          <canvas
-                            ref={canvasRef}
-                            width={640}
-                            height={360}
-                            className="absolute inset-0 w-full h-full object-cover"
-                          />
-                        </>
-                      )}
-                      {isInitializing && (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/95 z-10">
-                          <Loader2 className="w-10 h-10 animate-spin text-white/60 mb-3" />
-                          <span className="text-white/60 text-xs font-medium">{initializationProgress}</span>
-                        </div>
-                      )}
-                    </>
+        {/* Main Content Grid */}
+        <div className="grid lg:grid-cols-3 gap-6">
+          {/* Video Feeds - Takes 2 columns */}
+          <div className="lg:col-span-2 space-y-4">
+            {/* Primary Feed - Your Camera with AI */}
+            <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden shadow-2xl ring-1 ring-white/10 relative group">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-white/[0.02] backdrop-blur-sm absolute top-0 left-0 right-0 z-10 transition-transform duration-300 -translate-y-full group-hover:translate-y-0">
+                <div className="flex items-center gap-2">
+                  <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-gray-500'} shadow-[0_0_10px_rgba(239,68,68,0.5)]`} />
+                  <span className="text-white text-sm font-medium drop-shadow-md">Your Camera - AI Detection {isRecording ? 'Active' : 'Inactive'}</span>
+                </div>
+                <div className="flex gap-2">
+                  {!isRecording ? (
+                    <button
+                      onClick={startRecording}
+                      disabled={isInitializing || !mlModelsReady}
+                      className="px-3 py-1.5 bg-green-500/90 backdrop-blur-sm text-white text-xs font-medium rounded-lg hover:bg-green-500 transition-colors flex items-center gap-1 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <PlayCircle className="w-3 h-3" />
+                      Start AI
+                    </button>
                   ) : (
-                    <video
-                      src={MOCK_VIDEO_URLS[i]}
-                      className="absolute inset-0 w-full h-full object-cover"
-                      autoPlay
-                      muted
-                      loop
-                      playsInline
-                      aria-label={label}
-                    />
-                  )}
-                  {/* Label */}
-                  <div className="absolute top-2 left-2 px-2 py-1 rounded-lg bg-black/60 backdrop-blur-sm">
-                    <span className="text-xs font-medium text-white/90">{label}</span>
-                  </div>
-                  {/* LIVE pill (mock feeds) */}
-                  {!isYourCamera && (
-                    <div className="absolute bottom-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/60 backdrop-blur-sm">
-                      <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                      <span className="text-[10px] font-medium text-white/90 uppercase tracking-wider">Live</span>
-                    </div>
+                    <button
+                      onClick={stopRecording}
+                      className="px-3 py-1.5 bg-red-500/90 backdrop-blur-sm text-white text-xs font-medium rounded-lg hover:bg-red-500 transition-colors flex items-center gap-1 shadow-lg"
+                    >
+                      <StopCircle className="w-3 h-3" />
+                      Stop
+                    </button>
                   )}
                 </div>
-                {isYourCamera && (
-                  <div className="p-3 flex justify-center border-t border-white/5 bg-white/[0.02]">
-                    {!isRecording ? (
-                      <button
-                        onClick={startRecording}
-                        disabled={isInitializing || !mlModelsReady}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      >
-                        <PlayCircle className="w-4 h-4" />
-                        Start analysis
-                      </button>
-                    ) : (
-                      <button
-                        onClick={stopRecording}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-400 text-sm font-medium border border-red-500/30 transition-colors"
-                      >
-                        <StopCircle className="w-4 h-4" />
-                        Stop
-                      </button>
-                    )}
+              </div>
+              <div className="aspect-video bg-black relative">
+                {isClient && (
+                  <>
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="absolute inset-0 w-full h-full object-cover opacity-0"
+                      width={640}
+                      height={360}
+                    />
+                    <canvas
+                      ref={canvasRef}
+                      width={640}
+                      height={360}
+                      className="absolute inset-0 w-full h-full object-cover opacity-90 transition-opacity duration-300 group-hover:opacity-100"
+                    />
+                  </>
+                )}
+                {isInitializing && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/95 z-10">
+                    <Loader2 className="w-10 h-10 animate-spin text-white/60 mb-3" />
+                    <span className="text-white/60 text-xs font-medium">{initializationProgress}</span>
+                  </div>
+                )}
+                {/* Always visible status when header is hidden */}
+                <div className="absolute top-4 left-4 flex items-center gap-2 group-hover:opacity-0 transition-opacity duration-300">
+                  <div className="px-2 py-1 bg-black/50 backdrop-blur-md rounded-md border border-white/10 flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-gray-500'}`} />
+                    <span className="text-xs text-white font-medium">{isRecording ? 'LIVE AI' : 'READY'}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Secondary Feeds - Mock Videos */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { zone: 'Zone B - Storage', video: '/videos/Shoplifting1.mp4' },
+                { zone: 'Zone C - Office', video: '/videos/Fighting1.mp4' },
+                { zone: 'Zone D - Parking', video: '/videos/Vandalism3.mp4' }
+              ].map((item, i) => (
+                <div key={i} className="bg-[#111] rounded-lg border border-white/5 overflow-hidden group cursor-pointer hover:ring-1 hover:ring-green-500/50 transition-all duration-300 hover:shadow-lg hover:shadow-green-500/5">
+                  <div className="aspect-video bg-black relative">
+                    <video
+                      src={item.video}
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                      className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                    />
+                    <div className="absolute top-2 left-2">
+                      <div className="flex items-center gap-1 px-2 py-1 bg-black/60 backdrop-blur-sm rounded text-xs text-white">
+                        <div className="w-1.5 h-1.5 bg-green-500 rounded-full" />
+                        Live
+                      </div>
+                    </div>
+                  </div>
+                  <div className="p-2.5">
+                    <p className="text-xs text-gray-400">{item.zone}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Info Note */}
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
+              <p className="text-blue-400 text-sm">
+                <strong>AI Detection:</strong> Your camera analyzes every 3 seconds. When shoplifting detected: 🔴 Red flash, 🔊 Voice alert, 💾 6-sec clip saved (3s before + 3s after).
+              </p>
+            </div>
+          </div>
+
+          {/* Sidebar - Recent Activity */}
+          <div className="space-y-4">
+            {/* Recent Incidents */}
+            <div className="bg-[#111] rounded-xl border border-white/5 p-5 shadow-lg">
+              <div className="flex items-center gap-2 mb-4">
+                <Activity className="w-4 h-4 text-gray-400" />
+                <span className="text-white font-medium">Recent Activity</span>
+              </div>
+              <div className="space-y-3">
+                {recentIncidents.length > 0 ? (
+                  recentIncidents.map((incident, i) => (
+                    <div
+                      key={i}
+                      className="p-3 rounded-lg border bg-red-500/5 border-red-500/20 hover:bg-red-500/10 hover:shadow-[0_0_15px_-5px_rgba(239,68,68,0.3)] transition-all duration-300"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="mt-0.5 text-red-500">
+                          <AlertTriangle className="w-4 h-4" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-white font-medium">Shoplifting Detected</p>
+                          <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{incident.description}</p>
+                          <p className="text-xs text-gray-500 mt-1">{incident.time}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="p-4 rounded-lg bg-white/[0.02] border border-white/5 text-center">
+                    <p className="text-sm text-gray-500">No incidents detected yet</p>
+                    <p className="text-xs text-gray-600 mt-1">Start analysis to begin monitoring</p>
                   </div>
                 )}
               </div>
-            )
-          })}
-        </div>
+            </div>
 
-        <p className="text-gray-500 text-sm max-w-2xl">
-          Only <strong className="text-gray-400">Your camera</strong> runs AI. Incidents only when there is proof of placing something into a bag or clothing. Clip: 3s before + 3s after (6s) saved to Saved Videos; added to Retail Theft. Voice: &quot;THEFT detected&quot; via MiniMax when configured.
-        </p>
+            {/* Quick Actions */}
+            <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-5">
+              <h3 className="text-white font-medium mb-1">System Status</h3>
+              <p className="text-green-500 text-sm mb-4">All systems operational</p>
+              <div className="grid grid-cols-2 gap-2">
+                <Link href="/pages/statistics">
+                  <button className="w-full p-3 bg-white/5 hover:bg-white/10 rounded-lg transition-colors text-center">
+                    <TrendingUp className="w-5 h-5 text-green-500 mx-auto mb-1" />
+                    <p className="text-xs text-gray-400">Analytics</p>
+                  </button>
+                </Link>
+                <Link href="/pages/saved-videos">
+                  <button className="w-full p-3 bg-white/5 hover:bg-white/10 rounded-lg transition-colors text-center">
+                    <Video className="w-5 h-5 text-gray-400 mx-auto mb-1" />
+                    <p className="text-xs text-gray-400">Videos</p>
+                  </button>
+                </Link>
+                <Link href="/pages/upload">
+                  <button className="w-full p-3 bg-white/5 hover:bg-white/10 rounded-lg transition-colors text-center">
+                    <Camera className="w-5 h-5 text-gray-400 mx-auto mb-1" />
+                    <p className="text-xs text-gray-400">Upload</p>
+                  </button>
+                </Link>
+                <Link href="/pages/detected-incidents">
+                  <button className="w-full p-3 bg-white/5 hover:bg-white/10 rounded-lg transition-colors text-center">
+                    <ShieldAlert className="w-5 h-5 text-gray-400 mx-auto mb-1" />
+                    <p className="text-xs text-gray-400">Incidents</p>
+                  </button>
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </DashboardLayout>
   )

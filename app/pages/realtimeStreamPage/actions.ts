@@ -88,6 +88,15 @@ Remember: isDangerous true ONLY for placing into bag/clothing (with proof), conc
             const text = response.choices[0]?.message?.content || "";
             console.log('Raw API Response:', text);
 
+            // Check if response is empty or null
+            if (!text || text.trim().length === 0) {
+                console.log('Empty response from API, returning empty events');
+                return {
+                    events: [],
+                    rawResponse: "No content in API response"
+                };
+            }
+
             // Check if the response is a refusal or non-JSON response
             if (text.includes("I'm sorry") || text.includes("I cannot") || text.includes("I can't")) {
                 console.log('API refused to process image, returning empty events');
@@ -99,7 +108,7 @@ Remember: isDangerous true ONLY for placing into bag/clothing (with proof), conc
 
             // Try to extract JSON from the response, handling potential code blocks
             let jsonStr = text.trim();
-            
+
             // First try to extract content from code blocks if present
             const codeBlockMatch = text.match(/```(?:json)?\s*({[\s\S]*?})\s*```/);
             if (codeBlockMatch) {
@@ -107,21 +116,38 @@ Remember: isDangerous true ONLY for placing into bag/clothing (with proof), conc
                 console.log('Extracted JSON from code block:', jsonStr);
             } else if (!jsonStr.startsWith('{')) {
                 // If no code block and doesn't start with {, try to find raw JSON
-                const jsonMatch = text.match(/\{[^]*\}/);  
+                const jsonMatch = text.match(/\{[^]*\}/);
                 if (jsonMatch) {
                     jsonStr = jsonMatch[0];
                     console.log('Extracted raw JSON:', jsonStr);
+                } else {
+                    // No JSON found at all
+                    console.log('No JSON found in response, returning empty events');
+                    return {
+                        events: [],
+                        rawResponse: text
+                    };
                 }
+            }
+
+            // Final check before parsing
+            if (!jsonStr || jsonStr.trim().length === 0) {
+                console.log('Empty JSON string, returning empty events');
+                return {
+                    events: [],
+                    rawResponse: text
+                };
             }
 
             try {
                 const parsed = JSON.parse(jsonStr);
                 return {
-                    events: parsed.events || [],
+                    events: Array.isArray(parsed.events) ? parsed.events : [],
                     rawResponse: text
                 };
             } catch (parseError) {
                 console.error('Error parsing JSON:', parseError);
+                console.error('Failed JSON string:', jsonStr);
                 console.log('Attempting to return empty events due to parse error');
                 // Return empty events instead of throwing error
                 return {

@@ -51,8 +51,14 @@ Please format your response in this way:
 
     const text = response.choices[0]?.message?.content
 
-    return NextResponse.json({ 
-      summary: text || 'Unable to generate summary.' 
+    if (!text || text.trim().length === 0) {
+      return NextResponse.json({
+        summary: 'No summary could be generated. Please try again.'
+      })
+    }
+
+    return NextResponse.json({
+      summary: text
     })
   } catch (error: any) {
     console.error('Error generating summary:', error)

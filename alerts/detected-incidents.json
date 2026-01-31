@@ -1,5 +1,69 @@
 [
   {
+    "id": "inc-1769900634512-xrve1ck",
+    "snapshotPath": "snapshots/inc-1769900634512-xrve1ck.png",
+    "description": "Person holding a bag of oranges and placing it into a bag",
+    "cameraId": "your-camera",
+    "timestamp": "00:23",
+    "createdAt": "2026-01-31T23:03:54.518Z"
+  },
+  {
+    "id": "inc-1769900631563-m3t56xl",
+    "snapshotPath": "snapshots/inc-1769900631563-m3t56xl.png",
+    "description": "Person holding bag of oranges. Another person visible in the background.",
+    "cameraId": "your-camera",
+    "timestamp": "00:20",
+    "createdAt": "2026-01-31T23:03:51.570Z"
+  },
+  {
+    "id": "inc-1769900628875-qnnbnz1",
+    "snapshotPath": "snapshots/inc-1769900628875-qnnbnz1.png",
+    "description": "Person holding a bag of oranges close to a backpack.",
+    "cameraId": "your-camera",
+    "timestamp": "00:18",
+    "createdAt": "2026-01-31T23:03:48.878Z"
+  },
+  {
+    "id": "inc-1769900625208-nzrmcwv",
+    "snapshotPath": "snapshots/inc-1769900625208-nzrmcwv.png",
+    "description": "Person holding a bag of oranges close to their face.",
+    "cameraId": "your-camera",
+    "timestamp": "00:14",
+    "createdAt": "2026-01-31T23:03:45.213Z"
+  },
+  {
+    "id": "inc-1769900621614-7p1eqmc",
+    "snapshotPath": "snapshots/inc-1769900621614-7p1eqmc.png",
+    "description": "Person holding a bag of oranges and displaying them towards the camera",
+    "cameraId": "your-camera",
+    "timestamp": "00:10",
+    "createdAt": "2026-01-31T23:03:41.651Z"
+  },
+  {
+    "id": "inc-1769900618068-3n5iip6",
+    "snapshotPath": "snapshots/inc-1769900618068-3n5iip6.jpg",
+    "description": "Person holding a bag of oranges in hand.",
+    "cameraId": "your-camera",
+    "timestamp": "00:06",
+    "createdAt": "2026-01-31T23:03:38.068Z"
+  },
+  {
+    "id": "inc-1769899555740-clztyqe",
+    "snapshotPath": "snapshots/inc-1769899555740-clztyqe.jpg",
+    "description": "Placing item into bag",
+    "cameraId": "your-camera",
+    "timestamp": "00:05",
+    "createdAt": "2026-01-31T22:45:55.741Z"
+  },
+  {
+    "id": "inc-1769897830515-qr52anb",
+    "snapshotPath": "snapshots/inc-1769897830515-qr52anb.png",
+    "description": "Placing item into bag",
+    "cameraId": "your-camera",
+    "timestamp": "00:14",
+    "createdAt": "2026-01-31T22:17:10.515Z"
+  },
+  {
     "id": "inc-1769893458261-2b1tgeu",
     "snapshotPath": "snapshots/inc-1769893458261-2b1tgeu.jpg",
     "description": "Placing item into bag",
