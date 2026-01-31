@@ -39,7 +39,7 @@ export default function SignInClient() {
         <div className="w-10 h-10 bg-mint rounded-xl flex items-center justify-center">
           <Eye className="w-5 h-5 text-gray-dark" />
         </div>
-        <span className="text-2xl font-bold text-white tracking-tight">iSPY</span>
+        <span className="text-2xl font-bold text-white tracking-tight">KIMSTORE</span>
       </div>
 
       <div className="bg-[#111] rounded-2xl border border-white/10 p-8">

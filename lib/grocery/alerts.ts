@@ -1,0 +1,488 @@
+/**
+ * Grocery Store Theft Detection - Alert System
+ * 
+ * This module handles:
+ * - Alert payload formatting
+ * - Multi-channel alert dispatch (email, SMS, phone, webhook)
+ * - Alert templates for security teams
+ */
+
+import type {
+  TheftEvent,
+  AlertConfig,
+  SeverityLevel,
+  Keyframe,
+  GroceryCamera,
+  Zone,
+} from './types'
+import { getBehaviorDisplayName, getSeverityColor } from './prompts'
+
+// ============================================
+// ALERT PAYLOAD
+// ============================================
+
+/**
+ * Complete alert payload for security notifications
+ */
+export interface SecurityAlertPayload {
+  // Identifiers
+  alertId: string
+  eventId: string
+  timestamp: string           // ISO timestamp
+  
+  // Location
+  storeId: string
+  storeName: string
+  storeAddress: string
+  cameraId: string
+  cameraName: string
+  zoneName: string | null
+  
+  // Event details
+  eventType: string           // Display name for behavior type
+  behaviorType: string        // Raw behavior type
+  suspicionScore: number
+  severity: SeverityLevel
+  
+  // Explanation
+  description: string
+  reasoning: string           // "Why flagged" explanation
+  
+  // Evidence
+  keyframes: Array<{
+    id: string
+    url: string               // Base64 or hosted URL
+    timestamp: string
+  }>
+  clipUrl?: string
+  
+  // Formatted messages
+  shortMessage: string        // For SMS (< 160 chars)
+  fullMessage: string         // For email/webhook
+  voiceMessage: string        // For phone calls
+}
+
+/**
+ * Create a security alert payload from event data
+ */
+export function createAlertPayload(
+  event: TheftEvent,
+  camera: GroceryCamera | null,
+  zone: Zone | null,
+  storeInfo: { id: string; name: string; address: string },
+  keyframes: Keyframe[] = [],
+  clipUrl?: string
+): SecurityAlertPayload {
+  const eventType = getBehaviorDisplayName(event.behaviorType)
+  const timestamp = event.timestamp.toISOString()
+  const timeFormatted = new Date(event.timestamp).toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+
+  // Generate messages
+  const shortMessage = generateShortMessage(event, camera, storeInfo.name)
+  const fullMessage = generateFullMessage(event, camera, zone, storeInfo, keyframes)
+  const voiceMessage = generateVoiceMessage(event, camera, zone, storeInfo)
+
+  return {
+    alertId: `alert-${event.id}`,
+    eventId: event.id,
+    timestamp,
+    
+    storeId: storeInfo.id,
+    storeName: storeInfo.name,
+    storeAddress: storeInfo.address,
+    cameraId: camera?.id || 'unknown',
+    cameraName: camera?.name || 'Unknown Camera',
+    zoneName: zone?.name || null,
+    
+    eventType,
+    behaviorType: event.behaviorType,
+    suspicionScore: event.suspicionScore,
+    severity: event.severity,
+    
+    description: event.description,
+    reasoning: event.reasoning,
+    
+    keyframes: keyframes.map(kf => ({
+      id: kf.id,
+      url: kf.imageData,
+      timestamp: kf.timestamp.toISOString(),
+    })),
+    clipUrl,
+    
+    shortMessage,
+    fullMessage,
+    voiceMessage,
+  }
+}
+
+// ============================================
+// MESSAGE GENERATION
+// ============================================
+
+/**
+ * Generate short message for SMS (< 160 chars)
+ */
+function generateShortMessage(
+  event: TheftEvent,
+  camera: GroceryCamera | null,
+  storeName: string
+): string {
+  const type = getBehaviorDisplayName(event.behaviorType)
+  const score = event.suspicionScore
+  const cameraName = camera?.name || 'Cam'
+  
+  // Template: [ALERT] Concealment detected at Main Floor (Score: 75). Check dashboard.
+  let msg = `[${event.severity.toUpperCase()}] ${type} at ${storeName} - ${cameraName}. Score: ${score}. Check dashboard.`
+  
+  // Truncate if too long
+  if (msg.length > 160) {
+    msg = `[${event.severity.toUpperCase()}] ${type} at ${cameraName}. Score: ${score}. Check now.`
+  }
+  
+  return msg.substring(0, 160)
+}
+
+/**
+ * Generate full message for email/webhook
+ */
+function generateFullMessage(
+  event: TheftEvent,
+  camera: GroceryCamera | null,
+  zone: Zone | null,
+  storeInfo: { id: string; name: string; address: string },
+  keyframes: Keyframe[]
+): string {
+  const type = getBehaviorDisplayName(event.behaviorType)
+  const time = event.timestamp.toLocaleString()
+  
+  return `
+SECURITY ALERT - ${event.severity.toUpperCase()}
+${'='.repeat(50)}
+
+INCIDENT SUMMARY
+----------------
+Type: ${type}
+Time: ${time}
+Suspicion Score: ${event.suspicionScore}/100
+Severity: ${event.severity.toUpperCase()}
+
+LOCATION
+--------
+Store: ${storeInfo.name}
+Address: ${storeInfo.address}
+Camera: ${camera?.name || 'Unknown'}
+Zone: ${zone?.name || 'General Area'}
+
+DESCRIPTION
+-----------
+${event.description}
+
+WHY THIS WAS FLAGGED
+--------------------
+${event.reasoning}
+
+EVIDENCE
+--------
+${keyframes.length} keyframe(s) captured
+${keyframes.length > 0 ? 'See attached images or access dashboard for details.' : 'No keyframes available.'}
+
+RECOMMENDED ACTION
+------------------
+${getRecommendedAction(event.severity)}
+
+---
+This alert was generated by KIMSTORE Retail Theft Detection System.
+Event ID: ${event.id}
+`.trim()
+}
+
+/**
+ * Generate voice message for phone alerts
+ */
+function generateVoiceMessage(
+  event: TheftEvent,
+  camera: GroceryCamera | null,
+  zone: Zone | null,
+  storeInfo: { id: string; name: string; address: string }
+): string {
+  const type = getBehaviorDisplayName(event.behaviorType)
+  const time = event.timestamp.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+  
+  return `This is an automated security alert from KIMSTORE at ${storeInfo.name}. 
+At ${time}, we detected potential ${type.toLowerCase()} 
+${zone ? `in the ${zone.name} area` : ''}
+${camera ? `on camera ${camera.name}` : ''}.
+The suspicion score is ${event.suspicionScore} out of 100, rated as ${event.severity} severity.
+${event.description}.
+${getRecommendedAction(event.severity)}
+Please check the security dashboard for more details and video evidence.`
+}
+
+/**
+ * Get recommended action based on severity
+ */
+function getRecommendedAction(severity: SeverityLevel): string {
+  switch (severity) {
+    case 'critical':
+      return 'IMMEDIATE ACTION REQUIRED: Dispatch security personnel to the location now. Consider contacting authorities.'
+    case 'high':
+      return 'HIGH PRIORITY: Security personnel should investigate this incident as soon as possible.'
+    case 'medium':
+      return 'Monitor the situation closely. Review video footage and consider having security check the area.'
+    case 'low':
+      return 'Low priority. Review when convenient. This may be a false positive.'
+    default:
+      return 'Review the incident on the dashboard.'
+  }
+}
+
+// ============================================
+// ALERT DISPATCH
+// ============================================
+
+/**
+ * Dispatch alerts through configured channels
+ */
+export async function dispatchAlert(
+  payload: SecurityAlertPayload,
+  config: AlertConfig
+): Promise<{
+  success: boolean
+  channels: {
+    email: { sent: boolean; error?: string }
+    sms: { sent: boolean; error?: string }
+    phone: { sent: boolean; error?: string }
+    webhook: { sent: boolean; error?: string }
+  }
+}> {
+  const results = {
+    email: { sent: false, error: undefined as string | undefined },
+    sms: { sent: false, error: undefined as string | undefined },
+    phone: { sent: false, error: undefined as string | undefined },
+    webhook: { sent: false, error: undefined as string | undefined },
+  }
+
+  // Check if severity meets minimum thresholds
+  const severityOrder: Record<SeverityLevel, number> = {
+    low: 0,
+    medium: 1,
+    high: 2,
+    critical: 3,
+  }
+
+  // Email
+  if (config.email.enabled && 
+      severityOrder[payload.severity] >= severityOrder[config.email.minSeverity]) {
+    results.email = await sendEmailAlert(payload, config.email.recipients)
+  }
+
+  // SMS
+  if (config.sms.enabled && 
+      severityOrder[payload.severity] >= severityOrder[config.sms.minSeverity]) {
+    results.sms = await sendSmsAlert(payload, config.sms.phoneNumbers)
+  }
+
+  // Phone
+  if (config.phone.enabled && 
+      severityOrder[payload.severity] >= severityOrder[config.phone.minSeverity]) {
+    results.phone = await sendPhoneAlert(payload, config.phone)
+  }
+
+  // Webhook
+  if (config.webhook.enabled && 
+      severityOrder[payload.severity] >= severityOrder[config.webhook.minSeverity]) {
+    results.webhook = await sendWebhookAlert(payload, config.webhook)
+  }
+
+  return {
+    success: Object.values(results).some(r => r.sent),
+    channels: results,
+  }
+}
+
+// ============================================
+// CHANNEL IMPLEMENTATIONS
+// ============================================
+
+/**
+ * Send email alert
+ */
+async function sendEmailAlert(
+  payload: SecurityAlertPayload,
+  recipients: string[]
+): Promise<{ sent: boolean; error?: string }> {
+  if (recipients.length === 0) {
+    return { sent: false, error: 'No recipients configured' }
+  }
+
+  try {
+    const response = await fetch('/api/send-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: `[${payload.severity.toUpperCase()}] ${payload.eventType} - ${payload.storeName}`,
+        description: payload.fullMessage,
+        recipients,
+      }),
+    })
+
+    if (!response.ok) {
+      const data = await response.json()
+      return { sent: false, error: data.error || 'Email failed' }
+    }
+
+    return { sent: true }
+  } catch (error: any) {
+    return { sent: false, error: error.message }
+  }
+}
+
+/**
+ * Send SMS alert
+ */
+async function sendSmsAlert(
+  payload: SecurityAlertPayload,
+  phoneNumbers: string[]
+): Promise<{ sent: boolean; error?: string }> {
+  // SMS implementation would go here
+  // For MVP, we'll just log it
+  console.log('[SMS Alert]', {
+    to: phoneNumbers,
+    message: payload.shortMessage,
+  })
+  
+  // In production, integrate with Twilio or similar
+  return { sent: false, error: 'SMS not implemented in MVP' }
+}
+
+/**
+ * Send phone call alert via Vapi
+ */
+async function sendPhoneAlert(
+  payload: SecurityAlertPayload,
+  config: AlertConfig['phone']
+): Promise<{ sent: boolean; error?: string }> {
+  try {
+    const response = await fetch('/api/vapi-call', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        eventDescription: payload.description,
+        timestamp: payload.timestamp,
+        location: `${payload.cameraName} at ${payload.storeName}`,
+        severity: payload.severity,
+        reasoning: payload.reasoning,
+      }),
+    })
+
+    if (!response.ok) {
+      const data = await response.json()
+      return { sent: false, error: data.error || 'Phone call failed' }
+    }
+
+    return { sent: true }
+  } catch (error: any) {
+    return { sent: false, error: error.message }
+  }
+}
+
+/**
+ * Send webhook alert
+ */
+async function sendWebhookAlert(
+  payload: SecurityAlertPayload,
+  config: AlertConfig['webhook']
+): Promise<{ sent: boolean; error?: string }> {
+  if (!config.url) {
+    return { sent: false, error: 'No webhook URL configured' }
+  }
+
+  try {
+    const response = await fetch(config.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...config.headers,
+      },
+      body: JSON.stringify({
+        type: 'security_alert',
+        ...payload,
+      }),
+    })
+
+    if (!response.ok) {
+      return { sent: false, error: `Webhook returned ${response.status}` }
+    }
+
+    return { sent: true }
+  } catch (error: any) {
+    return { sent: false, error: error.message }
+  }
+}
+
+// ============================================
+// ALERT HISTORY
+// ============================================
+
+const ALERT_HISTORY_KEY = 'grocery_theft_alerts'
+
+export interface AlertHistoryRecord {
+  id: string
+  eventId: string
+  timestamp: string
+  severity: SeverityLevel
+  eventType: string
+  channelsSent: string[]
+  success: boolean
+}
+
+/**
+ * Record an alert in history
+ */
+export function recordAlert(
+  payload: SecurityAlertPayload,
+  dispatchResult: Awaited<ReturnType<typeof dispatchAlert>>
+): void {
+  if (typeof window === 'undefined') return
+
+  const record: AlertHistoryRecord = {
+    id: payload.alertId,
+    eventId: payload.eventId,
+    timestamp: payload.timestamp,
+    severity: payload.severity,
+    eventType: payload.eventType,
+    channelsSent: Object.entries(dispatchResult.channels)
+      .filter(([, result]) => result.sent)
+      .map(([channel]) => channel),
+    success: dispatchResult.success,
+  }
+
+  try {
+    const existing = getAlertHistory()
+    existing.push(record)
+    const trimmed = existing.slice(-200)
+    localStorage.setItem(ALERT_HISTORY_KEY, JSON.stringify(trimmed))
+  } catch (error) {
+    console.error('Error recording alert:', error)
+  }
+}
+
+/**
+ * Get alert history
+ */
+export function getAlertHistory(): AlertHistoryRecord[] {
+  if (typeof window === 'undefined') return []
+  
+  try {
+    const stored = localStorage.getItem(ALERT_HISTORY_KEY)
+    return stored ? JSON.parse(stored) : []
+  } catch {
+    return []
+  }
+}

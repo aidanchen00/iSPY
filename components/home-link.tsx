@@ -13,7 +13,7 @@ export default function HomeLink() {
         <Eye className="w-4 h-4 text-gray-dark" />
       </div>
       <span className="text-xl font-bold text-white tracking-tight">
-        iSPY
+        KIMSTORE
       </span>
     </Link>
   )

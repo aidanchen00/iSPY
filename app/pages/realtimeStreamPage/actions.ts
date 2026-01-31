@@ -22,49 +22,43 @@ export async function detectEvents(base64Image: string, transcript: string = '')
         }
 
         console.log('Sending image to OpenAI API...');
-        const prompt = `Analyze this frame and determine if any of these specific dangerous situations are occurring:
+        const prompt = `Analyze this security camera frame.
 
-1. Medical Emergencies:
-- Person unconscious or lying motionless
-- Person clutching chest/showing signs of heart problems
-- Seizures or convulsions
-- Difficulty breathing or choking
+**INCIDENT RULE — ONLY FLAG WHEN THERE IS PROOF:**
+- Having a bag or carrying items is OK. Do NOT flag "person holding a bag" or "carrying items" by itself.
+- ONLY create an incident (isDangerous: true) when you see proof of:
+  1) **Placing something INTO a bag, pocket, or under clothing** — describe as "Placing [item/object] into bag" or "Placing item into pocket/clothing." Say what is being placed only if clearly visible (e.g. "Placing item into bag"); do NOT name the specific product (no "oranges" or "mandarins").
+  2) **Visible concealment** — bulge under shirt/jacket, item being hidden in clothing. Describe as "Possible concealment under clothing" or "Placing item under clothing."
 
-2. Falls and Injuries:
-- Person falling or about to fall
-- Person on the ground after a fall
-- Signs of injury or bleeding
-- Limping or showing signs of physical trauma
+If the person only has a bag or is only carrying items and is NOT placing anything into the bag/clothing, do NOT add an event with isDangerous: true.
 
-3. Distress Signals:
-- Person calling for help or showing distress
-- Panic attacks or severe anxiety symptoms
-- Signs of fainting or dizziness
-- Headache or unease
-- Signs of unconsciousness
+**1. Retail / placing into bag (only flag if proof of placing into bag/clothing):**
+- Is the person actively placing or putting an item into a bag, pocket, or under clothing? → isDangerous: true, description: "Placing item into bag" or "Placing item into pocket" (add what is being placed only if clearly visible; use "item" or "object," not product names).
+- Visible concealment under clothing? → isDangerous: true.
 
-4. Violence or Threats:
-- Physical altercations
-- Threatening behavior
-- Weapons visible
+**2. Medical:** Unconscious, clutching chest, seizures, choking → isDangerous: true.
 
-5. Suspicious Activities:
-- Shoplifting
-- Vandalism
-- Trespassing
-${transcript ? `Consider this audio transcript from the scene: "${transcript}"
+**3. Falls/Injuries:** Falling, on ground, bleeding → isDangerous: true.
+
+**4. Distress:** Calling for help, fainting → isDangerous: true.
+
+**5. Violence/Threats:** Altercation, weapons → isDangerous: true.
+
+**6. Other:** Vandalism, trespassing → isDangerous: true.
+${transcript ? `Consider this audio transcript: "${transcript}"
 ` : ''}
-Return a JSON object in this exact format:
+Return ONLY valid JSON in this format:
 
 {
     "events": [
         {
             "timestamp": "mm:ss",
-            "description": "Brief description of what's happening in this frame",
-            "isDangerous": true/false // Set to true if the event involves a fall, injury, unease, pain, accident, or concerning behavior
+            "description": "e.g. Placing item into bag — only for proof of placing into bag/clothing; do not accuse for just having a bag",
+            "isDangerous": true
         }
     ]
-}`;
+}
+Remember: isDangerous true ONLY for placing into bag/clothing (with proof), concealment under clothing, medical, falls, violence, or other dangerous behavior. NOT for simply holding a bag or carrying items.`;
 
         try {
             const response = await openai.chat.completions.create({

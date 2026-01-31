@@ -22,11 +22,13 @@ export default function VideoPage() {
   const [video, setVideo] = useState<SavedVideo | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [videoDuration, setVideoDuration] = useState(0)
+  const [videoError, setVideoError] = useState(false)
   const params = useParams()
   const router = useRouter()
   const videoRef = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
+    setVideoError(false)
     const savedVideos: SavedVideo[] = JSON.parse(localStorage.getItem("savedVideos") || "[]")
     const foundVideo = savedVideos.find((v) => v.id === params.id)
     if (foundVideo) {
@@ -59,6 +61,15 @@ export default function VideoPage() {
     const [minutes, seconds] = timestamp.split(":").map(Number)
     videoRef.current.currentTime = minutes * 60 + seconds
     videoRef.current.play()
+  }
+
+  const handleVideoError = () => {
+    setVideoError(true)
+    if (video?.id && typeof window !== "undefined") {
+      const saved: SavedVideo[] = JSON.parse(localStorage.getItem("savedVideos") || "[]")
+      const updated = saved.filter((v) => v.id !== video.id)
+      localStorage.setItem("savedVideos", JSON.stringify(updated))
+    }
   }
 
   if (!video) {
@@ -113,8 +124,16 @@ export default function VideoPage() {
         </div>
 
         <div className="max-w-4xl space-y-6">
-          <div className="bg-[#111] border border-white/5 rounded-xl overflow-hidden">
-            <VideoPlayer url={video.url} timestamps={video.timestamps} ref={videoRef} />
+          <div className="bg-[#0d0d0d] border border-white/5 rounded-lg overflow-hidden">
+            {videoError ? (
+              <div className="aspect-video flex flex-col items-center justify-center bg-black text-gray-400 p-6">
+                <Video className="w-12 h-12 mb-3 opacity-50" />
+                <p className="text-sm">This video couldn’t be loaded.</p>
+                <p className="text-xs mt-1">If it was an incident clip, it may have been saved before we stored videos on the server. New clips will play correctly.</p>
+              </div>
+            ) : (
+              <VideoPlayer url={video.url} timestamps={video.timestamps} ref={videoRef} onError={handleVideoError} />
+            )}
           </div>
           
           <div className="bg-[#111] border border-white/5 rounded-xl p-5">

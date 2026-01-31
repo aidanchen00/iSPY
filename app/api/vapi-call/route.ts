@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     const customerNumber = "+16693609914"
 
     // Create the system prompt with the event details
-    const systemPrompt = `You are an AI security monitoring assistant from iSPY Security Systems. You are making an urgent security alert call.
+    const systemPrompt = `You are an AI security monitoring assistant from KIMSTORE Security. You are making an urgent security alert call.
 
 CRITICAL ALERT DETAILS:
 - Event: ${eventDescription}
@@ -34,7 +34,7 @@ CRITICAL ALERT DETAILS:
 - Location: ${location || "Security camera feed"}
 
 Your task:
-1. Immediately identify yourself: "This is an automated security alert from iSPY Security Systems."
+1. Immediately identify yourself: "This is an automated security alert from KIMSTORE Security."
 2. Clearly state the emergency: Describe what was detected in a calm but urgent manner.
 3. Ask if they want more details or if they're dispatching security/authorities.
 4. Offer to stay on the line or provide a callback number.
@@ -42,7 +42,7 @@ Your task:
 
 Keep responses brief and focused. The recipient needs actionable information quickly.`
 
-    const firstMessage = `This is an automated security alert from iSPY Security Systems. We've detected a dangerous situation: ${eventDescription}. This was detected at ${timestamp || "just now"} on your security feed. Do you need me to provide more details or should I wait while you dispatch security?`
+    const firstMessage = `This is an automated security alert from KIMSTORE Security. We've detected a dangerous situation: ${eventDescription}. This was detected at ${timestamp || "just now"} on your security feed. Do you need me to provide more details or should I wait while you dispatch security?`
 
     const callData = {
       assistant: {

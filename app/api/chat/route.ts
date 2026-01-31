@@ -35,7 +35,7 @@ ${contextMessage}`
 
     console.log('Sending request to OpenAI...')
     const response = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
+      model: "gpt-4o-mini",
       messages: [
         { role: "system", content: systemMessage },
         ...messages

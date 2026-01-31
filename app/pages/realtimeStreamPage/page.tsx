@@ -1,231 +1,117 @@
 "use client"
 
-import type React from "react"
 import { useState, useRef, useEffect } from "react"
-import { Camera, StopCircle, PlayCircle, Save, Loader2, Video, Phone, PhoneCall } from "lucide-react"
-import { Progress } from "@/components/ui/progress"
-import { Input } from "@/components/ui/input"
+import Link from "next/link"
+import { StopCircle, PlayCircle, Loader2, Camera, ShieldAlert } from "lucide-react"
 import { DashboardLayout } from "@/components/dashboard-layout"
-import TimestampList from "@/components/timestamp-list"
-import ChatInterface from "@/components/chat-interface"
-import { Timeline } from "../../components/Timeline"
-import type { Timestamp } from "@/app/types"
 import { detectEvents, type VideoEvent } from "./actions"
+import { MOCK_CAMERA_LABELS, MOCK_VIDEO_URLS, YOUR_CAMERA_INDEX, TOTAL_CAMERAS } from "./mock-cameras"
 
-import type * as blazeface from '@tensorflow-models/blazeface'
-import type * as posedetection from '@tensorflow-models/pose-detection'
-import type * as tf from '@tensorflow/tfjs'
+import type * as blazeface from "@tensorflow-models/blazeface"
+import type * as posedetection from "@tensorflow-models/pose-detection"
 
-let tfjs: typeof tf
 let blazefaceModel: typeof blazeface
 let poseDetection: typeof posedetection
 
-interface SavedVideo {
-  id: string
-  name: string
-  url: string
-  thumbnailUrl: string
-  timestamps: Timestamp[]
-}
+const PRE_SEC = 3000   // 3 seconds before incident
+const POST_SEC = 3000  // 3 seconds after (clip total 6 sec)
+const BUFFER_MS = 10_000
+const CHUNK_MS = 500
 
-interface Keypoint {
-  x: number
-  y: number
-  score?: number
-  name?: string
+interface ChunkItem {
+  blob: Blob
+  ts: number
 }
 
 export default function Page() {
   const [isRecording, setIsRecording] = useState(false)
-  const [timestamps, setTimestamps] = useState<Timestamp[]>([])
-  const [analysisProgress, setAnalysisProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [isInitializing, setIsInitializing] = useState(true)
-  const [currentTime, setCurrentTime] = useState(0)
-  const [videoDuration, setVideoDuration] = useState(0)
-  const [initializationProgress, setInitializationProgress] = useState('')
-  const [transcript, setTranscript] = useState('')
-  const [isTranscribing, setIsTranscribing] = useState(false)
-  const [videoName, setVideoName] = useState('')
-  const [recordedVideoUrl, setRecordedVideoUrl] = useState<string | null>(null)
+  const [initializationProgress, setInitializationProgress] = useState("")
   const [mlModelsReady, setMlModelsReady] = useState(false)
-  const [lastPoseKeypoints, setLastPoseKeypoints] = useState<Keypoint[]>([])
+  const [lastAlert, setLastAlert] = useState<{ description: string; time: string } | null>(null)
   const [isClient, setIsClient] = useState(false)
-  
-  // Vapi call states
-  const [isCallingAlert, setIsCallingAlert] = useState(false)
-  const [callStatus, setCallStatus] = useState<string | null>(null)
-  const [lastCallTime, setLastCallTime] = useState<number>(0)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const analysisIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const detectionFrameRef = useRef<number | null>(null)
   const lastDetectionTime = useRef<number>(0)
-  const lastFrameTimeRef = useRef<number>(performance.now())
   const startTimeRef = useRef<Date | null>(null)
   const faceModelRef = useRef<blazeface.BlazeFaceModel | null>(null)
   const poseModelRef = useRef<posedetection.PoseDetector | null>(null)
-  const recognitionRef = useRef<SpeechRecognition | null>(null)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const recordedChunksRef = useRef<Blob[]>([])
   const isRecordingRef = useRef<boolean>(false)
-  const durationIntervalRef = useRef<NodeJS.Timeout | null>(null)
-
-  // Trigger Vapi call for security alert
-  const triggerSecurityCall = async (eventDescription: string, timestamp: string) => {
-    // Prevent multiple calls within 30 seconds
-    const now = Date.now()
-    if (now - lastCallTime < 30000) {
-      console.log("Skipping call - too soon after last call")
-      return
-    }
-
-    setIsCallingAlert(true)
-    setCallStatus("Initiating security call...")
-    setLastCallTime(now)
-
-    try {
-      const response = await fetch("/api/vapi-call", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          eventDescription,
-          timestamp,
-          location: "Live security camera feed"
-        })
-      })
-
-      const data = await response.json()
-
-      if (response.ok) {
-        setCallStatus("Security call connected!")
-        setTimeout(() => setCallStatus(null), 5000)
-      } else {
-        setCallStatus(`Call failed: ${data.error}`)
-        setTimeout(() => setCallStatus(null), 5000)
-      }
-    } catch (error: any) {
-      console.error("Error triggering call:", error)
-      setCallStatus(`Error: ${error.message}`)
-      setTimeout(() => setCallStatus(null), 5000)
-    } finally {
-      setIsCallingAlert(false)
-    }
-  }
-
-  // Demo button handler - triggers a test call
-  const handleDemoCall = () => {
-    const demoEvents = [
-      "Physical altercation detected between two individuals",
-      "Suspicious person attempting unauthorized access",
-      "Potential theft in progress - individual concealing items",
-      "Aggressive behavior detected near entrance",
-      "Unattended package left in restricted area"
-    ]
-    const randomEvent = demoEvents[Math.floor(Math.random() * demoEvents.length)]
-    const currentTimeStr = new Date().toLocaleTimeString()
-    triggerSecurityCall(randomEvent, currentTimeStr)
-  }
+  const chunksRef = useRef<ChunkItem[]>([])
+  const incidentTimeRef = useRef<number | null>(null)
+  const incidentDescRef = useRef<string | null>(null)
+  const postTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const initMLModels = async () => {
     try {
       setIsInitializing(true)
       setMlModelsReady(false)
       setError(null)
-
-      setInitializationProgress('Loading TensorFlow.js...')
-      const tfPromise = import('@tensorflow/tfjs').then(async (tf) => {
-        tfjs = tf
-        await tf.ready()
-        await tf.setBackend('webgl')
-        await tf.env().set('WEBGL_FORCE_F16_TEXTURES', true)
-        await tf.env().set('WEBGL_PACK', true)
-        await tf.env().set('WEBGL_CHECK_NUMERICAL_PROBLEMS', false)
-      })
-
-      setInitializationProgress('Loading detection models...')
+      setInitializationProgress("Loading TensorFlow.js...")
+      const tf = await import("@tensorflow/tfjs")
+      await tf.ready()
+      await tf.setBackend("webgl")
+      setInitializationProgress("Loading detection models...")
       const [blazefaceModule, poseDetectionModule] = await Promise.all([
-        import('@tensorflow-models/blazeface'),
-        import('@tensorflow-models/pose-detection')
+        import("@tensorflow-models/blazeface"),
+        import("@tensorflow-models/pose-detection"),
       ])
-
       blazefaceModel = blazefaceModule
       poseDetection = poseDetectionModule
-
-      await tfPromise
-
-      setInitializationProgress('Initializing models...')
+      setInitializationProgress("Initializing models...")
       const [faceModel, poseModel] = await Promise.all([
         blazefaceModel.load({ maxFaces: 1, scoreThreshold: 0.5 }),
-        poseDetection.createDetector(
-          poseDetection.SupportedModels.MoveNet,
-          { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING, enableSmoothing: true, minPoseScore: 0.3 }
-        )
+        poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, {
+          modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,
+          enableSmoothing: true,
+          minPoseScore: 0.3,
+        }),
       ])
-
       faceModelRef.current = faceModel
       poseModelRef.current = poseModel
-
       setMlModelsReady(true)
       setIsInitializing(false)
     } catch (err) {
-      setError('Failed to load ML models: ' + (err as Error).message)
+      setError("Failed to load ML models: " + (err as Error).message)
       setMlModelsReady(false)
       setIsInitializing(false)
     }
   }
 
-  const updateCanvasSize = () => {
-    if (!videoRef.current || !canvasRef.current) return
-    canvasRef.current.width = 640
-    canvasRef.current.height = 360
-  }
-
   const startWebcam = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 30 }, facingMode: "user" },
-        audio: true
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 }, facingMode: "user" },
+        audio: false,
       })
       if (videoRef.current) {
         videoRef.current.srcObject = stream
         mediaStreamRef.current = stream
         await new Promise<void>((resolve) => {
-          videoRef.current!.onloadedmetadata = () => { updateCanvasSize(); resolve() }
+          videoRef.current!.onloadedmetadata = () => resolve()
         })
+        if (canvasRef.current) {
+          canvasRef.current.width = 640
+          canvasRef.current.height = 360
+        }
       }
-    } catch (error) {
+    } catch {
       setError("Failed to access webcam. Please grant camera permissions.")
     }
   }
 
   const stopWebcam = () => {
     if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((track) => track.stop())
+      mediaStreamRef.current.getTracks().forEach((t) => t.stop())
       mediaStreamRef.current = null
     }
     if (videoRef.current) videoRef.current.srcObject = null
-    if (recordedVideoUrl) { URL.revokeObjectURL(recordedVideoUrl); setRecordedVideoUrl(null) }
-  }
-
-  const initSpeechRecognition = () => {
-    if (typeof window === "undefined") return
-    if ("webkitSpeechRecognition" in window) {
-      const SpeechRecognition = window.webkitSpeechRecognition
-      const recognition = new SpeechRecognition()
-      recognition.continuous = true
-      recognition.interimResults = true
-      recognition.onresult = (event: SpeechRecognitionEvent) => {
-        let finalTranscript = ""
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript
-        }
-        if (finalTranscript) setTranscript((prev) => prev + " " + finalTranscript)
-      }
-      recognitionRef.current = recognition
-    }
   }
 
   const runDetection = async () => {
@@ -236,358 +122,442 @@ export default function Page() {
       return
     }
     lastDetectionTime.current = now
-
     const video = videoRef.current
     const canvas = canvasRef.current
-    if (!video || !canvas) { detectionFrameRef.current = requestAnimationFrame(runDetection); return }
-
+    if (!video || !canvas) {
+      detectionFrameRef.current = requestAnimationFrame(runDetection)
+      return
+    }
     const ctx = canvas.getContext("2d")
-    if (!ctx) { detectionFrameRef.current = requestAnimationFrame(runDetection); return }
-
+    if (!ctx) {
+      detectionFrameRef.current = requestAnimationFrame(runDetection)
+      return
+    }
     ctx.clearRect(0, 0, canvas.width, canvas.height)
-    drawVideoToCanvas(video, canvas, ctx)
-
     const scaleX = canvas.width / video.videoWidth
     const scaleY = canvas.height / video.videoHeight
-
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
     if (faceModelRef.current) {
       try {
         const predictions = await faceModelRef.current.estimateFaces(video, false)
-        predictions.forEach((prediction: blazeface.NormalizedFace) => {
-          const start = prediction.topLeft as [number, number]
-          const end = prediction.bottomRight as [number, number]
-          const size = [end[0] - start[0], end[1] - start[1]]
-          const scaledStart = [start[0] * scaleX, start[1] * scaleY]
-          const scaledSize = [size[0] * scaleX, size[1] * scaleX]
-
+        predictions.forEach((p: blazeface.NormalizedFace) => {
+          const [sx, sy] = [(p.topLeft as number[])[0] * scaleX, (p.topLeft as number[])[1] * scaleY]
+          const [sw, sh] = [(p.bottomRight as number[])[0] * scaleX - sx, (p.bottomRight as number[])[1] * scaleY - sy]
           ctx.strokeStyle = "#4DFFBC"
           ctx.lineWidth = 2
-          ctx.strokeRect(scaledStart[0], scaledStart[1], scaledSize[0], scaledSize[1])
-
-          const confidence = Math.round((prediction.probability as number) * 100)
-          ctx.fillStyle = "white"
-          ctx.font = "14px sans-serif"
-          ctx.fillText(`${confidence}%`, scaledStart[0], scaledStart[1] - 5)
+          ctx.strokeRect(sx, sy, sw, sh)
         })
-      } catch (err) { console.error("Face detection error:", err) }
+      } catch {}
     }
-
     if (poseModelRef.current) {
       try {
         const poses = await poseModelRef.current.estimatePoses(video)
         if (poses.length > 0) {
-          const keypoints = poses[0].keypoints
-          const convertedKeypoints: Keypoint[] = keypoints.map(kp => ({
-            x: kp.x, y: kp.y, score: kp.score ?? 0, name: kp.name
-          }))
-          setLastPoseKeypoints(convertedKeypoints)
-
-          keypoints.forEach((keypoint) => {
-            if ((keypoint.score ?? 0) > 0.3) {
-              const x = keypoint.x * scaleX
-              const y = keypoint.y * scaleY
+          poses[0].keypoints.forEach((kp) => {
+            if ((kp.score ?? 0) > 0.3) {
+              const x = kp.x * scaleX
+              const y = kp.y * scaleY
               ctx.beginPath()
               ctx.arc(x, y, 4, 0, 2 * Math.PI)
               ctx.fillStyle = "#FF4D4D"
               ctx.fill()
-              ctx.beginPath()
-              ctx.arc(x, y, 6, 0, 2 * Math.PI)
-              ctx.strokeStyle = "white"
-              ctx.lineWidth = 1.5
-              ctx.stroke()
             }
           })
         }
-      } catch (err) { console.error("Pose detection error:", err) }
+      } catch {}
     }
-
-    lastFrameTimeRef.current = performance.now()
     detectionFrameRef.current = requestAnimationFrame(runDetection)
   }
 
-  const drawVideoToCanvas = (video: HTMLVideoElement, canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) => {
-    const videoAspect = video.videoWidth / video.videoHeight
-    const canvasAspect = canvas.width / canvas.height
-    let drawWidth = canvas.width, drawHeight = canvas.height, offsetX = 0, offsetY = 0
-    if (videoAspect > canvasAspect) { drawHeight = canvas.width / videoAspect; offsetY = (canvas.height - drawHeight) / 2 }
-    else { drawWidth = canvas.height * videoAspect; offsetX = (canvas.width - drawWidth) / 2 }
-    ctx.drawImage(video, offsetX, offsetY, drawWidth, drawHeight)
-  }
-
-  const analyzeFrame = async () => {
-    if (!isRecordingRef.current) return
-    const currentTranscript = transcript.trim()
-
-    try {
-      const frame = await captureFrame()
-      if (!frame || !frame.startsWith("data:image/jpeg")) return
-
-      const result = await detectEvents(frame, currentTranscript)
-      if (!isRecordingRef.current) return
-
-      if (result.events && result.events.length > 0) {
-        result.events.forEach(async (event: VideoEvent) => {
-          const timestampStr = getElapsedTime()
-          const newTimestamp = { timestamp: timestampStr, description: event.description, isDangerous: event.isDangerous }
-          setTimestamps((prev) => [...prev, newTimestamp])
-
-          if (event.isDangerous) {
-            // Send email notification
-            try {
-              await fetch("/api/send-email", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ title: "Dangerous Activity Detected", description: `At ${timestampStr}: ${event.description}` })
-              })
-            } catch (error) { console.error("Email error:", error) }
-
-            // Trigger phone call for dangerous events
-            triggerSecurityCall(event.description, timestampStr)
-          }
-        })
-      }
-    } catch (error) {
-      console.error("Error analyzing frame:", error)
-      if (isRecordingRef.current) stopRecording()
-    }
-  }
-
   const captureFrame = async (): Promise<string | null> => {
-    if (!videoRef.current) return null
+    const video = videoRef.current
+    if (!video) return null
+    const w = video.videoWidth
+    const h = video.videoHeight
+    const maxW = 1280
+    const scale = w > maxW ? maxW / w : 1
+    const cw = Math.round(w * scale)
+    const ch = Math.round(h * scale)
     const tempCanvas = document.createElement("canvas")
-    tempCanvas.width = 640; tempCanvas.height = 360
+    tempCanvas.width = cw
+    tempCanvas.height = ch
     const context = tempCanvas.getContext("2d")
     if (!context) return null
-    try { context.drawImage(videoRef.current, 0, 0, 640, 360); return tempCanvas.toDataURL("image/jpeg", 0.8) }
-    catch { return null }
+    try {
+      context.drawImage(video, 0, 0, w, h, 0, 0, cw, ch)
+      return tempCanvas.toDataURL("image/jpeg", 0.92)
+    } catch {
+      return null
+    }
   }
 
   const getElapsedTime = () => {
     if (!startTimeRef.current) return "00:00"
     const elapsed = Math.floor((Date.now() - startTimeRef.current.getTime()) / 1000)
-    setCurrentTime(elapsed)
     return `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`
   }
 
-  const startRecording = () => {
-    setCurrentTime(0); setVideoDuration(0)
-    if (!mlModelsReady) { setError("ML models not ready"); return }
-    if (!mediaStreamRef.current) return
+  const saveIncidentClipToSavedVideos = async (blob: Blob, description: string): Promise<string | undefined> => {
+    const name = `Incident - ${description.slice(0, 40)}${description.length > 40 ? "…" : ""} - ${new Date().toLocaleString()}`
+    const timestamps = [{ timestamp: "00:05", description }]
+    let id = `inc-${Date.now()}`
+    let url: string
 
-    setError(null); setTimestamps([]); setAnalysisProgress(0)
-    startTimeRef.current = new Date()
-    isRecordingRef.current = true; setIsRecording(true)
-
-    if (durationIntervalRef.current) clearInterval(durationIntervalRef.current)
-    durationIntervalRef.current = setInterval(() => {
-      if (isRecordingRef.current) setVideoDuration(Math.floor((Date.now() - startTimeRef.current!.getTime()) / 1000))
-    }, 1000)
-
-    if (recognitionRef.current) { setTranscript(""); setIsTranscribing(true); recognitionRef.current.start() }
-
-    recordedChunksRef.current = []
-    const mediaRecorder = new MediaRecorder(mediaStreamRef.current, { mimeType: "video/mp4" })
-    mediaRecorder.ondataavailable = (event) => { if (event.data.size > 0) recordedChunksRef.current.push(event.data) }
-    mediaRecorder.onstop = () => {
-      const blob = new Blob(recordedChunksRef.current, { type: "video/mp4" })
-      setRecordedVideoUrl(URL.createObjectURL(blob)); setVideoName("stream.mp4")
+    try {
+      const form = new FormData()
+      form.append("file", blob)
+      form.append("name", name)
+      form.append("timestamps", JSON.stringify(timestamps))
+      const res = await fetch("/api/saved-videos", { method: "POST", body: form })
+      if (res.ok) {
+        const data = await res.json()
+        id = data.id
+        url = data.url ?? `/api/saved-videos/stream/${data.id}`
+      } else {
+        url = URL.createObjectURL(blob)
+      }
+    } catch {
+      url = URL.createObjectURL(blob)
     }
-    mediaRecorderRef.current = mediaRecorder
-    mediaRecorder.start(1000)
+
+    try {
+      const existing: { id: string; name: string; url: string; thumbnailUrl: string; timestamps: { timestamp: string; description: string }[] }[] =
+        JSON.parse(typeof window !== "undefined" ? localStorage.getItem("savedVideos") || "[]" : "[]")
+      existing.unshift({ id, name, url, thumbnailUrl: url, timestamps })
+      localStorage.setItem("savedVideos", JSON.stringify(existing))
+      const clipUrlForRetail = url.startsWith("/api/") ? url : undefined
+      return clipUrlForRetail
+    } catch (e) {
+      console.error("Failed to save incident clip:", e)
+      return undefined
+    }
+  }
+
+  const updateRetailTheftClipUrl = (clipUrl: string) => {
+    try {
+      const key = "retailTheftLiveIncidents"
+      const existing: { clipUrl?: string }[] = JSON.parse(typeof window !== "undefined" ? localStorage.getItem(key) || "[]" : "[]")
+      if (existing.length > 0 && !existing[0].clipUrl) {
+        existing[0] = { ...existing[0], clipUrl }
+        localStorage.setItem(key, JSON.stringify(existing))
+      }
+    } catch {}
+  }
+
+  const flushPostIncidentClip = () => {
+    const t0 = incidentTimeRef.current
+    const desc = incidentDescRef.current
+    incidentTimeRef.current = null
+    incidentDescRef.current = null
+    if (t0 == null || !desc) return
+    const tEnd = t0 + POST_SEC
+    const arr = chunksRef.current
+      .filter((c) => c.ts >= t0 - PRE_SEC && c.ts <= tEnd)
+      .sort((a, b) => a.ts - b.ts)
+    if (arr.length === 0) return
+    const blob = new Blob(arr.map((c) => c.blob), { type: arr[0].blob.type || "video/webm" })
+    saveIncidentClipToSavedVideos(blob, desc)
+      .then((clipUrl) => { if (clipUrl) updateRetailTheftClipUrl(clipUrl) })
+      .catch((e) => console.error("Save clip:", e))
+  }
+
+  const saveIncidentSnapshot = async (frameBase64: string, description: string) => {
+    try {
+      const res = await fetch("/api/detected-incidents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          snapshotBase64: frameBase64,
+          description,
+          cameraId: "your-camera",
+          timestamp: getElapsedTime(),
+        }),
+      })
+      const data = await res.json()
+      if (data.duplicate) return
+      setLastAlert({ description, time: getElapsedTime() })
+    } catch (e) {
+      console.error("Failed to save incident snapshot:", e)
+    }
+  }
+
+  const addToRetailTheft = (description: string, clipUrl?: string) => {
+    try {
+      const key = "retailTheftLiveIncidents"
+      const existing: unknown[] = JSON.parse(typeof window !== "undefined" ? localStorage.getItem(key) || "[]" : "[]")
+      const id = `live-${Date.now()}`
+      const event = {
+        id,
+        timestamp: new Date().toISOString(),
+        cameraId: "your-camera",
+        storeId: "store-1",
+        zoneId: "live-camera",
+        behaviorType: "concealment",
+        suspicionScore: 75,
+        severity: "high",
+        description,
+        reasoning: "Live AI detection: placing into bag or clothing.",
+        keyframes: [],
+        ...(clipUrl && { clipUrl }),
+        alertSent: true,
+        alertChannels: ["voice"],
+      }
+      existing.unshift(event)
+      localStorage.setItem(key, JSON.stringify(existing))
+    } catch (e) {
+      console.error("Failed to add to Retail Theft:", e)
+    }
+  }
+
+  const onIncidentDetected = (frameBase64: string, description: string) => {
+    const now = Date.now()
+    incidentTimeRef.current = now
+    incidentDescRef.current = description
+    saveIncidentSnapshot(frameBase64, description)
+    addToRetailTheft(description)
+    fetch("/api/theft-voice", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "THEFT detected" }),
+    }).catch(() => {})
+    if (postTimeoutRef.current) clearTimeout(postTimeoutRef.current)
+    postTimeoutRef.current = setTimeout(flushPostIncidentClip, POST_SEC)
+  }
+
+  const analyzeFrame = async () => {
+    if (!isRecordingRef.current) return
+    try {
+      const frame = await captureFrame()
+      if (!frame || !frame.startsWith("data:image/jpeg")) return
+      const result = await detectEvents(frame, "")
+      if (!isRecordingRef.current) return
+      if (result.events?.length) {
+        for (const event of result.events) {
+          if (event.isDangerous) {
+            onIncidentDetected(frame, event.description)
+            break
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Error analyzing frame:", e)
+    }
+  }
+
+  const trimChunks = () => {
+    const now = Date.now()
+    const cut = now - BUFFER_MS
+    if (incidentTimeRef.current == null) {
+      chunksRef.current = chunksRef.current.filter((c) => c.ts >= cut)
+    } else {
+      chunksRef.current = chunksRef.current.filter((c) => c.ts >= Math.min(cut, incidentTimeRef.current! - PRE_SEC))
+    }
+  }
+
+  const startRecording = () => {
+    if (!mlModelsReady || !mediaStreamRef.current) return
+    setError(null)
+    startTimeRef.current = new Date()
+    isRecordingRef.current = true
+    setIsRecording(true)
+    chunksRef.current = []
+
+    const stream = mediaStreamRef.current
+    let mimeType = "video/webm"
+    if (MediaRecorder.isTypeSupported("video/webm;codecs=vp9")) mimeType = "video/webm;codecs=vp9"
+    else if (MediaRecorder.isTypeSupported("video/webm;codecs=vp8")) mimeType = "video/webm;codecs=vp8"
+    const recorder = new MediaRecorder(stream, { mimeType })
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        chunksRef.current.push({ blob: e.data, ts: Date.now() })
+        trimChunks()
+      }
+    }
+    recorder.start(CHUNK_MS)
+    mediaRecorderRef.current = recorder
 
     if (detectionFrameRef.current) cancelAnimationFrame(detectionFrameRef.current)
     lastDetectionTime.current = 0
     detectionFrameRef.current = requestAnimationFrame(runDetection)
-
     if (analysisIntervalRef.current) clearInterval(analysisIntervalRef.current)
     analyzeFrame()
     analysisIntervalRef.current = setInterval(analyzeFrame, 3000)
   }
 
   const stopRecording = () => {
-    startTimeRef.current = null; isRecordingRef.current = false; setIsRecording(false)
-    if (recognitionRef.current) { recognitionRef.current.stop(); setIsTranscribing(false) }
-    if (mediaRecorderRef.current?.state !== "inactive") mediaRecorderRef.current?.stop()
-    if (detectionFrameRef.current) { cancelAnimationFrame(detectionFrameRef.current); detectionFrameRef.current = null }
-    if (analysisIntervalRef.current) { clearInterval(analysisIntervalRef.current); analysisIntervalRef.current = null }
-    if (durationIntervalRef.current) { clearInterval(durationIntervalRef.current); durationIntervalRef.current = null }
+    startTimeRef.current = null
+    isRecordingRef.current = false
+    setIsRecording(false)
+    if (postTimeoutRef.current) {
+      clearTimeout(postTimeoutRef.current)
+      postTimeoutRef.current = null
+    }
+    incidentTimeRef.current = null
+    incidentDescRef.current = null
+    if (mediaRecorderRef.current?.state !== "inactive") {
+      mediaRecorderRef.current.stop()
+      mediaRecorderRef.current = null
+    }
+    if (detectionFrameRef.current) {
+      cancelAnimationFrame(detectionFrameRef.current)
+      detectionFrameRef.current = null
+    }
+    if (analysisIntervalRef.current) {
+      clearInterval(analysisIntervalRef.current)
+      analysisIntervalRef.current = null
+    }
   }
 
-  const handleSaveVideo = () => {
-    if (!recordedVideoUrl || !videoName) return
-    try {
-      const savedVideos: SavedVideo[] = JSON.parse(localStorage.getItem("savedVideos") || "[]")
-      savedVideos.push({ id: Date.now().toString(), name: videoName, url: recordedVideoUrl, thumbnailUrl: recordedVideoUrl, timestamps })
-      localStorage.setItem("savedVideos", JSON.stringify(savedVideos))
-      alert("Video saved!")
-    } catch { alert("Failed to save video") }
-  }
-
-  useEffect(() => { setIsClient(true) }, [])
+  useEffect(() => {
+    setIsClient(true)
+  }, [])
 
   useEffect(() => {
-    const video = videoRef.current
-    if (!video) return
-    const handleTimeUpdate = () => setCurrentTime(video.currentTime)
-    const handleLoadedMetadata = () => { setVideoDuration(video.duration || 60); video.currentTime = 0 }
-    video.addEventListener('timeupdate', handleTimeUpdate)
-    video.addEventListener('loadedmetadata', handleLoadedMetadata)
-    video.currentTime = 0
-    return () => { video.removeEventListener('timeupdate', handleTimeUpdate); video.removeEventListener('loadedmetadata', handleLoadedMetadata) }
-  }, [recordedVideoUrl])
-
-  useEffect(() => {
-    initSpeechRecognition()
-    const init = async () => { await startWebcam(); await initMLModels() }
+    const init = async () => {
+      await startWebcam()
+      await initMLModels()
+    }
     init()
     return () => {
       stopWebcam()
+      if (postTimeoutRef.current) clearTimeout(postTimeoutRef.current)
       if (analysisIntervalRef.current) clearInterval(analysisIntervalRef.current)
       if (detectionFrameRef.current) cancelAnimationFrame(detectionFrameRef.current)
+      if (mediaRecorderRef.current?.state !== "inactive") mediaRecorderRef.current?.stop()
     }
   }, [])
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-white mb-1">Live Stream</h1>
-            <p className="text-gray text-sm">Real-time video analysis with AI detection</p>
+            <h1 className="text-2xl font-bold text-white tracking-tight">CCTV Live</h1>
+            <p className="text-gray-400 text-sm mt-0.5">
+              5 demo feeds + your camera (6th) · Your camera runs AI detection
+            </p>
           </div>
-          
-          {/* Demo Call Button */}
-          <button
-            onClick={handleDemoCall}
-            disabled={isCallingAlert}
-            className="flex items-center gap-2 px-4 py-2.5 bg-coral text-white font-medium rounded-lg hover:bg-coral-light transition-colors disabled:opacity-50"
+          <Link
+            href="/pages/detected-incidents"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white text-sm font-medium transition-colors"
           >
-            {isCallingAlert ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Calling...
-              </>
-            ) : (
-              <>
-                <PhoneCall className="w-4 h-4" />
-                Demo Alert Call
-              </>
-            )}
-          </button>
+            <ShieldAlert className="w-4 h-4" />
+            Detected Incidents
+          </Link>
         </div>
 
-        {/* Call Status Banner */}
-        {callStatus && (
-          <div className={`p-4 rounded-xl flex items-center gap-3 ${
-            callStatus.includes("connected") || callStatus.includes("Initiating") 
-              ? "bg-mint/10 border border-mint/20 text-mint" 
-              : "bg-coral/10 border border-coral/20 text-coral"
-          }`}>
-            <Phone className="w-5 h-5" />
-            <span className="text-sm font-medium">{callStatus}</span>
+        {error && (
+          <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+            {error}
           </div>
         )}
 
-        <div className="max-w-4xl space-y-6">
-          <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
-            <div className="relative aspect-video bg-black">
-              {isInitializing && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/90 z-20">
-                  <Loader2 className="w-10 h-10 animate-spin text-mint mb-3" />
-                  <p className="text-gray text-sm">{initializationProgress}</p>
+        {lastAlert && (
+          <div className="p-4 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between">
+            <span className="text-gray-300 text-sm">Snapshot saved: {lastAlert.description}</span>
+            <Link href="/pages/detected-incidents" className="text-sm font-medium text-white hover:underline">
+              View
+            </Link>
+          </div>
+        )}
+
+        {/* Grid */}
+        <div className="grid grid-cols-3 gap-3 max-w-4xl">
+          {Array.from({ length: TOTAL_CAMERAS }, (_, i) => {
+            const isYourCamera = i === YOUR_CAMERA_INDEX
+            const label = isYourCamera ? "Your camera" : (MOCK_CAMERA_LABELS[i] ?? `Cam ${i + 1}`)
+            return (
+              <div
+                key={i}
+                className={`rounded-xl overflow-hidden flex flex-col border transition-all duration-200 ${
+                  isYourCamera
+                    ? "bg-white/[0.04] border-white/20 ring-1 ring-white/10 shadow-lg"
+                    : "bg-white/[0.02] border-white/5 hover:border-white/10 hover:bg-white/[0.04]"
+                }`}
+              >
+                <div className="aspect-video bg-black relative flex-shrink-0">
+                  {isYourCamera ? (
+                    <>
+                      {isClient && (
+                        <>
+                          <video
+                            ref={videoRef}
+                            autoPlay
+                            playsInline
+                            muted
+                            className="absolute inset-0 w-full h-full object-cover opacity-0"
+                            width={640}
+                            height={360}
+                          />
+                          <canvas
+                            ref={canvasRef}
+                            width={640}
+                            height={360}
+                            className="absolute inset-0 w-full h-full object-cover"
+                          />
+                        </>
+                      )}
+                      {isInitializing && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/95 z-10">
+                          <Loader2 className="w-10 h-10 animate-spin text-white/60 mb-3" />
+                          <span className="text-white/60 text-xs font-medium">{initializationProgress}</span>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <video
+                      src={MOCK_VIDEO_URLS[i]}
+                      className="absolute inset-0 w-full h-full object-cover"
+                      autoPlay
+                      muted
+                      loop
+                      playsInline
+                      aria-label={label}
+                    />
+                  )}
+                  {/* Label */}
+                  <div className="absolute top-2 left-2 px-2 py-1 rounded-lg bg-black/60 backdrop-blur-sm">
+                    <span className="text-xs font-medium text-white/90">{label}</span>
+                  </div>
+                  {/* LIVE pill (mock feeds) */}
+                  {!isYourCamera && (
+                    <div className="absolute bottom-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/60 backdrop-blur-sm">
+                      <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                      <span className="text-[10px] font-medium text-white/90 uppercase tracking-wider">Live</span>
+                    </div>
+                  )}
                 </div>
-              )}
-              <div className="relative w-full h-full">
-                {isClient && (
-                  <video ref={videoRef} autoPlay playsInline muted width={640} height={360} className="absolute inset-0 w-full h-full object-cover opacity-0" />
+                {isYourCamera && (
+                  <div className="p-3 flex justify-center border-t border-white/5 bg-white/[0.02]">
+                    {!isRecording ? (
+                      <button
+                        onClick={startRecording}
+                        disabled={isInitializing || !mlModelsReady}
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <PlayCircle className="w-4 h-4" />
+                        Start analysis
+                      </button>
+                    ) : (
+                      <button
+                        onClick={stopRecording}
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-400 text-sm font-medium border border-red-500/30 transition-colors"
+                      >
+                        <StopCircle className="w-4 h-4" />
+                        Stop
+                      </button>
+                    )}
+                  </div>
                 )}
-                <canvas ref={canvasRef} width={640} height={360} className="absolute inset-0 w-full h-full object-cover" />
               </div>
-            </div>
-          </div>
-
-          {error && !isInitializing && (
-            <div className="p-4 bg-coral/10 border border-coral/20 rounded-xl text-coral text-sm">{error}</div>
-          )}
-
-          <div className="flex justify-center gap-3">
-            {isInitializing ? (
-              <button disabled className="flex items-center gap-2 px-5 py-2.5 bg-white/5 text-gray rounded-lg cursor-not-allowed">
-                <Loader2 className="w-4 h-4 animate-spin" /> Initializing...
-              </button>
-            ) : !isRecording ? (
-              <button onClick={startRecording} className="flex items-center gap-2 px-5 py-2.5 bg-mint text-gray-dark font-medium rounded-lg hover:bg-mint-light transition-colors">
-                <PlayCircle className="w-4 h-4" /> Start Analysis
-              </button>
-            ) : (
-              <button onClick={stopRecording} className="flex items-center gap-2 px-5 py-2.5 bg-coral text-white font-medium rounded-lg hover:bg-coral-light transition-colors">
-                <StopCircle className="w-4 h-4" /> Stop
-              </button>
-            )}
-          </div>
-
-          {isRecording && (
-            <div className="flex items-center justify-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-coral animate-pulse" />
-              <span className="text-sm text-gray">Recording and analyzing... Auto-calling on dangerous events</span>
-            </div>
-          )}
-
-          <div className="bg-[#111] rounded-xl border border-white/5 p-5">
-            <h2 className="text-white font-medium mb-3">Key Moments</h2>
-            {timestamps.length > 0 ? (
-              <Timeline
-                events={timestamps.map(ts => {
-                  const [minutes, seconds] = ts.timestamp.split(':').map(Number)
-                  return { startTime: minutes * 60 + seconds, endTime: minutes * 60 + seconds + 3, type: ts.isDangerous ? 'warning' : 'normal', label: ts.description }
-                })}
-                totalDuration={videoDuration || 60}
-                currentTime={currentTime}
-              />
-            ) : (
-              <p className="text-gray text-sm">{isRecording ? "Waiting for events..." : "Start analysis to detect events"}</p>
-            )}
-          </div>
-
-          <TimestampList timestamps={timestamps} onTimestampClick={() => {}} />
-
-          <div className="bg-[#111] rounded-xl border border-white/5 p-5">
-            <h2 className="text-white font-medium mb-3">Audio Transcript</h2>
-            {isTranscribing && (
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-2 h-2 rounded-full bg-mint animate-pulse" />
-                <span className="text-xs text-gray">Transcribing...</span>
-              </div>
-            )}
-            <p className="text-gray text-sm whitespace-pre-wrap">
-              {transcript || (isRecording ? "Waiting for speech..." : "Start recording to capture audio")}
-            </p>
-          </div>
-
-          {isClient && !isRecording && recordedVideoUrl && (
-            <div className="bg-mint/5 border border-mint/20 rounded-xl p-5">
-              <h2 className="text-white font-medium mb-3">Save Recording</h2>
-              <div className="flex gap-3">
-                <Input
-                  type="text"
-                  placeholder="Video name"
-                  value={videoName}
-                  onChange={(e) => setVideoName(e.target.value)}
-                  className="flex-1 bg-white/5 border-white/10 text-white placeholder:text-gray/50"
-                />
-                <button
-                  onClick={handleSaveVideo}
-                  disabled={!videoName}
-                  className="px-4 py-2 bg-mint text-gray-dark font-medium rounded-lg hover:bg-mint-light transition-colors disabled:opacity-50 flex items-center gap-2"
-                >
-                  <Save className="w-4 h-4" /> Save
-                </button>
-              </div>
-            </div>
-          )}
+            )
+          })}
         </div>
 
-        <ChatInterface timestamps={timestamps} />
+        <p className="text-gray-500 text-sm max-w-2xl">
+          Only <strong className="text-gray-400">Your camera</strong> runs AI. Incidents only when there is proof of placing something into a bag or clothing. Clip: 3s before + 3s after (6s) saved to Saved Videos; added to Retail Theft. Voice: &quot;THEFT detected&quot; via MiniMax when configured.
+        </p>
       </div>
     </DashboardLayout>
   )

@@ -10,8 +10,8 @@ interface DashboardLayoutProps {
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   return (
-    <div className="min-h-screen bg-gray-dark text-white relative selection:bg-mint/30 selection:text-mint-light">
-      <div className="fixed inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-mint/5 via-gray-dark to-gray-dark pointer-events-none" />
+    <div className="min-h-screen bg-[#0a0a0a] text-white relative selection:bg-white/20 selection:text-white">
+      <div className="fixed inset-0 bg-[#0a0a0a] pointer-events-none" />
       <DashboardSidebar />
       <div className="lg:pl-64 relative z-10">
         <DashboardHeader />

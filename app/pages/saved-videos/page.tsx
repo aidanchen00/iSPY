@@ -20,9 +20,10 @@ export default function SavedVideosPage() {
   const [filteredVideos, setFilteredVideos] = useState<SavedVideo[]>([])
 
   useEffect(() => {
-    const existing = JSON.parse(localStorage.getItem("savedVideos") || "[]")
+    const existing: SavedVideo[] = JSON.parse(localStorage.getItem("savedVideos") || "[]")
+    const fromStorage = Array.isArray(existing) ? existing : []
 
-    if (!existing || existing.length === 0) {
+    if (fromStorage.length === 0) {
       const demoSeed: SavedVideo[] = [
         {
           id: "demo-1",
@@ -41,9 +42,31 @@ export default function SavedVideosPage() {
       setSavedVideos(demoSeed)
       setFilteredVideos(demoSeed)
     } else {
-      setSavedVideos(existing)
-      setFilteredVideos(existing)
+      setSavedVideos(fromStorage)
+      setFilteredVideos(fromStorage)
     }
+
+    const mergeWithServer = async () => {
+      try {
+        const res = await fetch("/api/saved-videos")
+        if (!res.ok) return
+        const serverList: { id: string; name: string; url: string; timestamps: { timestamp: string; description: string }[] }[] = await res.json()
+        const fromStorageAfter = JSON.parse(localStorage.getItem("savedVideos") || "[]") as SavedVideo[]
+        const byId = new Map(fromStorageAfter.map((v) => [v.id, v]))
+        for (const s of serverList) {
+          const entry = byId.get(s.id)
+          if (!entry) byId.set(s.id, { id: s.id, name: s.name, url: s.url, thumbnailUrl: s.url, timestamps: s.timestamps || [] })
+          else if (entry.url.startsWith("blob:") || !entry.url) byId.set(s.id, { ...entry, url: s.url, thumbnailUrl: s.url })
+        }
+        const merged = Array.from(byId.values())
+        setSavedVideos(merged)
+        setFilteredVideos(merged)
+        localStorage.setItem("savedVideos", JSON.stringify(merged))
+      } catch {
+        // keep current state
+      }
+    }
+    mergeWithServer()
   }, [])
 
   useEffect(() => {
@@ -58,6 +81,14 @@ export default function SavedVideosPage() {
   const handleDelete = (id: string) => {
     const updated = savedVideos.filter((v) => v.id !== id)
     setSavedVideos(updated)
+    setFilteredVideos((prev) => prev.filter((v) => v.id !== id))
+    localStorage.setItem("savedVideos", JSON.stringify(updated))
+  }
+
+  const handleVideoError = (id: string) => {
+    const updated = savedVideos.filter((v) => v.id !== id)
+    setSavedVideos(updated)
+    setFilteredVideos((prev) => prev.filter((v) => v.id !== id))
     localStorage.setItem("savedVideos", JSON.stringify(updated))
   }
 
@@ -66,7 +97,7 @@ export default function SavedVideosPage() {
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-white mb-1">Saved Videos</h1>
-          <p className="text-gray text-sm">{savedVideos.length} videos in your library</p>
+          <p className="text-gray-500 text-sm">{savedVideos.length} videos in your library</p>
         </div>
 
         <div className="relative max-w-md">
@@ -76,7 +107,7 @@ export default function SavedVideosPage() {
             placeholder="Search videos..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10 bg-white/5 border-white/10 text-white placeholder:text-gray/50"
+            className="pl-10 bg-[#0d0d0d] border-white/10 text-white placeholder:text-gray-500"
           />
         </div>
 
@@ -84,18 +115,20 @@ export default function SavedVideosPage() {
           {filteredVideos.map((video) => (
             <div
               key={video.id}
-              className="group bg-[#111] border border-white/5 rounded-xl overflow-hidden hover:border-white/10 transition-colors"
+              className="group bg-[#0d0d0d] border border-white/5 rounded-lg overflow-hidden hover:border-white/10 transition-colors"
             >
               <div className="aspect-video bg-black relative overflow-hidden">
                 <video
                   src={video.url}
-                  className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
-                  muted
+                  className="w-full h-full object-contain bg-black"
+                  controls
                   playsInline
+                  preload="metadata"
+                  onError={() => handleVideoError(video.id)}
                 />
                 <div className="absolute top-3 right-3">
                   <div className="flex items-center gap-1.5 px-2.5 py-1 bg-black/60 backdrop-blur-sm rounded-lg">
-                    <Video className="w-3 h-3 text-mint" />
+                    <Video className="w-3 h-3 text-gray-400" />
                     <span className="text-xs text-white">{video.timestamps.length}</span>
                   </div>
                 </div>
@@ -108,14 +141,14 @@ export default function SavedVideosPage() {
                 </div>
                 <div className="flex gap-2">
                   <Link href={`/pages/video/${video.id}`} className="flex-1">
-                    <button className="w-full py-2.5 bg-mint text-gray-dark text-sm font-medium rounded-lg hover:bg-mint-light transition-colors flex items-center justify-center gap-2">
+                    <button className="w-full py-2.5 bg-white/10 text-white text-sm font-medium rounded-lg hover:bg-white/15 border border-white/10 transition-colors flex items-center justify-center gap-2">
                       <Eye className="w-4 h-4" />
                       View
                     </button>
                   </Link>
                   <button
                     onClick={() => handleDelete(video.id)}
-                    className="p-2.5 bg-coral/10 hover:bg-coral/20 text-coral rounded-lg transition-colors"
+                    className="p-2.5 bg-white/5 hover:bg-white/10 text-gray-400 rounded-lg border border-white/5 transition-colors"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>

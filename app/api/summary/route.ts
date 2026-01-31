@@ -41,7 +41,7 @@ Please format your response in this way:
 3. Notable Patterns (if any)`
 
     const response = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
+      model: "gpt-4o-mini",
       messages: [
         { role: "system", content: "You are an expert at analyzing video safety data. Provide concise, insightful summaries focusing on safety patterns and concerns." },
         { role: "user", content: prompt }
