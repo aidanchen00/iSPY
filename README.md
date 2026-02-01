@@ -47,39 +47,39 @@ iSPY transforms passive surveillance into an **intelligent loss prevention syste
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           iSPY SURVEILLANCE PLATFORM                         │
+│                           iSPY SURVEILLANCE PLATFORM                        │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
+│                                                                             │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                   │
 │  │  VIDEO FEED  │    │  AUDIO FEED  │    │  POS DATA    │                   │
 │  │  (Cameras)   │    │  (Ambient)   │    │  (Optional)  │                   │
 │  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘                   │
-│         │                   │                   │                            │
-│         ▼                   ▼                   ▼                            │
+│         │                   │                   │                           │
+│         ▼                   ▼                   ▼                           │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                    INGESTION LAYER (Next.js Server Actions)          │    │
-│  │  • Frame capture @ 100ms intervals                                   │    │
-│  │  • Audio chunking for STT processing                                 │    │
-│  │  • Base64 encoding for model consumption                             │    │
+│  │                    INGESTION LAYER (Next.js Server Actions)         │    │
+│  │  • Frame capture @ 100ms intervals                                  │    │
+│  │  • Audio chunking for STT processing                                │    │
+│  │  • Base64 encoding for model consumption                            │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
-│                                    │                                         │
+│                                    │                                        │
 │         ┌──────────────────────────┼──────────────────────────┐             │
 │         ▼                          ▼                          ▼             │
-│  ┌─────────────┐           ┌─────────────┐           ┌─────────────┐        │
-│  │   YOLO v8   │           │  MiniMax    │           │  MiniMax    │        │
-│  │  Detection  │           │   M2.1      │           │ Speech 2.6  │        │
-│  │             │           │  (Vision)   │           │   (STT)     │        │
-│  │ • Person    │           │             │           │             │        │
-│  │ • Objects   │           │ • Behavior  │           │ • Transcribe│        │
-│  │ • Bags      │           │   Analysis  │           │ • Language  │        │
-│  │ • Products  │           │ • Context   │           │   Detection │        │
-│  └──────┬──────┘           └──────┬──────┘           └──────┬──────┘        │
+│  ┌─────────────┐           ┌─────────────┐           ┌────────────-─┐       │
+│  │   YOLO v8   │           │  MiniMax    │           │  MiniMax     │       │
+│  │  Detection  │           │   M2.1      │           │ Speech 2.6   │       │
+│  │             │           │  (Vision)   │           │   (STT)      │       │
+│  │ • Person    │           │             │           │              │       │
+│  │ • Objects   │           │ • Behavior  │           │ • Transcribe │       │
+│  │ • Bags      │           │   Analysis  │           │ • Language   │       │
+│  │ • Products  │           │ • Context   │           │   Detection  │       │
+│  └──────┬──────┘           └──────┬──────┘           └──────┬──────-┘       │
 │         │                         │                         │               │
 │         └─────────────────────────┼─────────────────────────┘               │
-│                                   ▼                                          │
+│                                   ▼                                         │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                     MULTI-AGENT REASONING ENGINE                     │    │
-│  │                                                                      │    │
+│  │                     MULTI-AGENT REASONING ENGINE                    │    │
+│  │                                                                     │    │
 │  │   ┌─────────────────────┐         ┌─────────────────────┐           │    │
 │  │   │   DETECTIVE COLE    │◄───────►│   ANALYST MORGAN    │           │    │
 │  │   │   (Audio Agent)     │ Debate  │   (Vision Agent)    │           │    │
@@ -89,9 +89,9 @@ iSPY transforms passive surveillance into an **intelligent loss prevention syste
 │  │   │   detection         │         │ • Zone violations   │           │    │
 │  │   │ • Stress indicators │         │ • Concealment       │           │    │
 │  │   └─────────────────────┘         └─────────────────────┘           │    │
-│  │                    │                         │                       │    │
-│  │                    └────────────┬────────────┘                       │    │
-│  │                                 ▼                                    │    │
+│  │                    │                         │                      │    │
+│  │                    └────────────┬────────────┘                      │    │
+│  │                                 ▼                                   │    │
 │  │                    ┌─────────────────────┐                          │    │
 │  │                    │    COORDINATOR      │                          │    │
 │  │                    │   (Consensus)       │                          │    │
@@ -101,21 +101,21 @@ iSPY transforms passive surveillance into an **intelligent loss prevention syste
 │  │                    │ • False positive    │                          │    │
 │  │                    │   minimization      │                          │    │
 │  │                    └──────────┬──────────┘                          │    │
-│  └───────────────────────────────┼──────────────────────────────────────┘    │
-│                                  ▼                                           │
+│  └───────────────────────────────┼─────────────────────────────────────┘    │
+│                                  ▼                                          │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                        ACTION LAYER                                  │    │
-│  │                                                                      │    │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐    │    │
-│  │  │  Voice   │  │  Alert   │  │ Incident │  │ Store Optimizer  │    │    │
-│  │  │  Alert   │  │  Gate    │  │   Log    │  │                  │    │    │
-│  │  │ (TTS)    │  │(Debounce)│  │ (SQLite) │  │ • Zone analysis  │    │    │
-│  │  └──────────┘  └──────────┘  └──────────┘  │ • Recommendations│    │    │
-│  │                                            │ • Config updates │    │    │
-│  │                                            └──────────────────┘    │    │
+│  │                        ACTION LAYER                                 │    │
+│  │                                                                     │    │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────-┐    │    │
+│  │  │  Voice   │  │  Alert   │  │ Incident │  │ Store Optimizer   │    │    │
+│  │  │  Alert   │  │  Gate    │  │   Log    │  │                   │    │    │
+│  │  │ (TTS)    │  │(Debounce)│  │ (SQLite) │  │ • Zone analysis   │    │    │
+│  │  └──────────┘  └──────────┘  └──────────┘  │ • Recommendations │    │    │
+│  │                                            │ • Config updates  │    │    │
+│  │                                            └──────────────────-┘    │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
-│                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Why MiniMax M2.1 for Vision Reasoning
