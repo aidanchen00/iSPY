@@ -339,6 +339,10 @@ By combining visual intelligence with audio understanding—by teaching AI not j
 
 ---
 
+## Note
+
+Collaborated on project as part of MiniMax Multimodal Stack Hackathon with Ayaan Gazali and Aksh Parekh.
+
 ## License
 
 MIT License - See [LICENSE](LICENSE) for details.
