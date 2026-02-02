@@ -1,7 +1,7 @@
 "use client"
 
 import { forwardRef } from "react"
-import type { Timestamp } from "@/app/types"
+import type { Timestamp } from "@/types"
 
 interface VideoPlayerProps {
   url: string

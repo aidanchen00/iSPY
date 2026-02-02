@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { DashboardLayout } from "@/components/dashboard-layout"
 import VideoPlayer from "@/components/video-player"
 import TimestampList from "@/components/timestamp-list"
-import type { Timestamp } from "@/app/types"
+import type { Timestamp } from "@/types"
 import { detectEvents, type VideoEvent } from "./actions"
 import Link from "next/link"
 

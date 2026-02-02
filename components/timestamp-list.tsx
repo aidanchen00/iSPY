@@ -1,7 +1,7 @@
 "use client"
 
 import { Shield, ShieldAlert, ChevronDown, ChevronUp } from "lucide-react"
-import type { Timestamp } from "@/app/types"
+import type { Timestamp } from "@/types"
 import { useState, useEffect, useRef } from "react"
 
 interface TimestampListProps {

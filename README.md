@@ -268,38 +268,34 @@ All three streams merge at AGENT COORDINATOR
 
 ## Getting Started
 
-### Prerequisites
-- Node.js 18+
-- MiniMax API Key
-
-### Installation
+### Quick Start
 
 ```bash
-# Clone the repository
+# Clone and install
 git clone https://github.com/your-org/ispy.git
 cd ispy
-
-# Install dependencies
 npm install
 
-# Set up environment variables
-cp .env.example .env.local
-# Add your MINIMAX_API_KEY to .env.local
-
-# Seed the demo database
-npx ts-node scripts/seed-agent-conversations.ts
-
-# Run the development server
+# Start the development server (no API keys required for testing!)
 npm run dev
 ```
+
+Visit `http://localhost:3000` to access the dashboard.
+
+### Documentation
+
+- **[Getting Started Guide](docs/getting-started.md)** - Full setup instructions
+- **[Architecture](docs/architecture.md)** - System design and module overview
+
+### Prerequisites
+- Node.js 18+
+- MiniMax API Key (optional - system works with local fallbacks)
 
 ### Environment Variables
 
 ```bash
-# Required
+# Optional - system uses local fallbacks when not configured
 MINIMAX_API_KEY=your_minimax_api_key
-
-# Optional
 ENABLE_MINIMAX_TTS=1      # Enable voice alerts
 ENABLE_MINIMAX_VLM=1      # Enable vision reasoning
 

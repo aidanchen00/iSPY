@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Input } from "@/components/ui/input"
 import { Loader2, MessageCircle, X, Send } from 'lucide-react'
-import type { Timestamp } from '@/app/types'
+import type { Timestamp } from '@/types'
 
 interface Message {
   content: string

@@ -8,7 +8,7 @@ import { DashboardLayout } from "@/components/dashboard-layout"
 import VideoPlayer from "@/components/video-player"
 import TimestampList from "@/components/timestamp-list"
 import { Timeline } from "@/app/components/Timeline"
-import type { Timestamp } from "@/app/types"
+import type { Timestamp } from "@/types"
 
 interface SavedVideo {
   id: string
